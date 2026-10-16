@@ -1,5 +1,6 @@
 package org.miu.cookbook.ui.history
 
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.combinedClickable
@@ -34,6 +35,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -51,9 +53,6 @@ import org.miu.cookbook.R
 import org.miu.cookbook.di.LocalAppContainer
 import org.miu.cookbook.ui.components.EmptyState
 
-/** 浮动栏要占的高度，列表顶上得留出这么多。 */
-private val TopBarArea = 80.dp
-
 private fun Set<Long>.toggle(id: Long): Set<Long> = if (id in this) this - id else this + id
 
 /**
@@ -61,11 +60,16 @@ private fun Set<Long>.toggle(id: Long): Set<Long> = if (id in this) this - id el
  *
  * 需求里说「默认正序、停在列表最下方、向上拖动回溯历史」——所以列表是
  * `reverseLayout = true` + 把天数倒着喂进去：index 0 就是最新的一天，落在屏幕底部。
+ *
+ * 进多选不再是浮动的编辑按钮，而是顶栏「⋮」菜单里的「多选」（[selectionRequested]）。
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun MealHistoryScreen(
     onOpenRecipe: (Long) -> Unit,
+    /** 顶栏「⋮」里点了「多选」。 */
+    selectionRequested: Boolean = false,
+    onSelectionRequestedHandled: () -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     val container = LocalAppContainer.current
@@ -76,12 +80,31 @@ fun MealHistoryScreen(
     val days = remember(rows) { rows.toHistoryDays(container.filesDir) }
     val listState = rememberLazyListState()
 
-    var detailDay by remember { mutableStateOf<MealHistoryDay?>(null) }
-    var editDay by remember { mutableStateOf<MealHistoryDay?>(null) }
-    var deleteDay by remember { mutableStateOf<MealHistoryDay?>(null) }
+    // 弹窗里按 epochDay 现查最新的那一天：在里面删掉/挪走某顿之后，弹窗内容要跟着变，
+    // 不能拿着打开那一刻的快照。整天被删光时 days 里查不到，弹窗自然就关了。
+    var detailEpoch by remember { mutableStateOf<Long?>(null) }
+    var editEpoch by remember { mutableStateOf<Long?>(null) }
+    var deleteEpoch by remember { mutableStateOf<Long?>(null) }
+    val detailDay = days.firstOrNull { it.epochDay == detailEpoch }
+    val editDay = days.firstOrNull { it.epochDay == editEpoch }
+    val deleteDay = days.firstOrNull { it.epochDay == deleteEpoch }
     var selecting by remember { mutableStateOf(false) }
     var selectedDays by remember { mutableStateOf<Set<Long>>(emptySet()) }
     var deleteSelection by remember { mutableStateOf(false) }
+
+    LaunchedEffect(selectionRequested) {
+        if (selectionRequested) {
+            selecting = true
+            selectedDays = emptySet()
+            onSelectionRequestedHandled()
+        }
+    }
+
+    // 安卓返回键：先退出多选，不要直接把应用丢到后台
+    BackHandler(enabled = selecting) {
+        selecting = false
+        selectedDays = emptySet()
+    }
 
     Box(modifier.fillMaxSize()) {
         if (days.isEmpty()) {
@@ -99,23 +122,23 @@ fun MealHistoryScreen(
             ) {
                 // 预留底部空白，免得最后一天被浮动加号挡住
                 item(key = "bottom-space") { Spacer(Modifier.height(96.dp)) }
+                // 多选时顶上会浮一条「已选 N 天 + 删除」，给它让点位置
+                item(key = "top-space") { Spacer(Modifier.height(if (selecting) 72.dp else 8.dp)) }
                 items(days.asReversed(), key = { it.epochDay }) { day ->
                     DayRow(
                         day = day,
                         selecting = selecting,
                         selected = day.epochDay in selectedDays,
-                        onOpen = { detailDay = day },
+                        onOpen = { detailEpoch = day.epochDay },
                         onToggleSelection = { selectedDays = selectedDays.toggle(day.epochDay) },
-                        onEdit = { editDay = day },
-                        onDelete = { deleteDay = day },
+                        onEdit = { editEpoch = day.epochDay },
+                        onDelete = { deleteEpoch = day.epochDay },
                     )
                     HorizontalDivider(
                         modifier = Modifier.padding(start = 108.dp),
                         color = MaterialTheme.colorScheme.outlineVariant,
                     )
                 }
-                // 顶部留出浮动栏的位置
-                item(key = "top-space") { Spacer(Modifier.height(TopBarArea)) }
             }
 
             if (selecting) {
@@ -128,11 +151,6 @@ fun MealHistoryScreen(
                     onDelete = { if (selectedDays.isNotEmpty()) deleteSelection = true },
                     modifier = Modifier.align(Alignment.TopCenter),
                 )
-            } else {
-                HistoryActionBar(
-                    onStartSelection = { selecting = true },
-                    modifier = Modifier.align(Alignment.TopCenter),
-                )
             }
         }
     }
@@ -141,10 +159,10 @@ fun MealHistoryScreen(
         DayDetailDialog(
             day = day,
             onOpenRecipe = { recipeId ->
-                detailDay = null
+                detailEpoch = null
                 onOpenRecipe(recipeId)
             },
-            onDismiss = { detailDay = null },
+            onDismiss = { detailEpoch = null },
         )
     }
 
@@ -152,16 +170,16 @@ fun MealHistoryScreen(
         DayEditDialog(
             day = day,
             repository = repository,
-            onDismiss = { editDay = null },
+            onDismiss = { editEpoch = null },
         )
     }
 
     deleteDay?.let { day ->
         DeleteMealDayDialog(
             day = day,
-            onDismiss = { deleteDay = null },
+            onDismiss = { deleteEpoch = null },
             onConfirm = {
-                deleteDay = null
+                deleteEpoch = null
                 scope.launch { repository.deleteMealDay(day.epochDay) }
             },
         )
@@ -292,36 +310,6 @@ private fun DayRow(
                     onDelete()
                 },
             )
-        }
-    }
-}
-
-/** 平时浮在列表上方的那一条：只有一个进多选的编辑按钮。 */
-@Composable
-private fun HistoryActionBar(
-    onStartSelection: () -> Unit,
-    modifier: Modifier = Modifier,
-) {
-    Surface(
-        modifier = modifier.padding(top = 8.dp).fillMaxWidth(),
-        color = MaterialTheme.colorScheme.surface,
-    ) {
-        Row(
-            horizontalArrangement = Arrangement.End,
-            modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp),
-        ) {
-            Surface(
-                shape = MaterialTheme.shapes.extraLarge,
-                color = MaterialTheme.colorScheme.surfaceContainerHigh,
-                shadowElevation = 3.dp,
-            ) {
-                IconButton(onClick = onStartSelection) {
-                    Icon(
-                        imageVector = Icons.Filled.Edit,
-                        contentDescription = stringResource(R.string.action_start_selection),
-                    )
-                }
-            }
         }
     }
 }

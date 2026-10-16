@@ -1,5 +1,6 @@
 package org.miu.cookbook.ui.recipes
 
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -23,7 +24,6 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.List
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.DateRange
@@ -79,13 +79,14 @@ import org.miu.cookbook.ui.history.RecipeMealHistoryDialog
 @Composable
 fun RecipeDetailScreen(
     recipeId: Long,
-    onBack: () -> Unit,
     onEditIngredients: () -> Unit,
     onEditContent: (ContentSection) -> Unit,
     onEditImages: () -> Unit,
     modifier: Modifier = Modifier,
     /** 长按菜单选「编辑食谱」进来时直接就是编辑态。 */
     startEditing: Boolean = false,
+    /** 把菜名报给常驻的顶栏，让它显示当前是哪道菜。 */
+    onTitleChange: (String) -> Unit = {},
 ) {
     val container = LocalAppContainer.current
     val repository = container.repository
@@ -103,28 +104,31 @@ fun RecipeDetailScreen(
     var historyOpen by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
 
+    // 返回键：编辑态先退出编辑，别一按就把这一页关掉
+    BackHandler(enabled = editing) {
+        editing = false
+        titleDraft = ui?.title.orEmpty()
+    }
+
     Box(modifier = modifier.fillMaxSize()) {
       Column(Modifier.fillMaxSize()) {
         val current = ui
 
+        // 菜名和返回箭头都在常驻的顶栏上，这一行只放页面自己的操作
         Row(
             verticalAlignment = Alignment.CenterVertically,
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 4.dp),
+                .padding(horizontal = 20.dp),
         ) {
-            IconButton(onClick = onBack) {
-                Icon(
-                    imageVector = Icons.AutoMirrored.Filled.ArrowBack,
-                    contentDescription = stringResource(R.string.action_back),
-                )
-            }
-
             Spacer(Modifier.weight(1f))
 
             if (current != null) {
                 if (editing) {
-                    TextButton(onClick = { editing = false }) {
+                    TextButton(onClick = {
+                        editing = false
+                        titleDraft = current.title
+                    }) {
                         Text(stringResource(R.string.action_cancel))
                     }
                     TextButton(
@@ -164,6 +168,9 @@ fun RecipeDetailScreen(
         LaunchedEffect(current.id) {
             titleDraft = current.title
         }
+
+        // 顶栏跟着菜名变（编辑态打字时也实时跟着）
+        LaunchedEffect(current.title) { onTitleChange(current.title) }
 
         Column(
             modifier = Modifier
@@ -248,30 +255,21 @@ fun RecipeDetailScreen(
                 Spacer(Modifier.height(16.dp))
             }
 
-            // 菜名：一级标题。编辑态只让改名字，井号是灰的、改不了。
+            // 菜名：一级标题。编辑态只让改名字；一级标题本来就固定，界面上不画井号。
             if (editing) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text(
-                        text = "#",
-                        style = MaterialTheme.typography.headlineMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.padding(end = 8.dp),
-                    )
-                    OutlinedTextField(
-                        value = titleDraft,
-                        onValueChange = { titleDraft = it },
-                        singleLine = true,
-                        placeholder = { Text(stringResource(R.string.recipe_title_hint)) },
-                        textStyle = MaterialTheme.typography.headlineSmall,
-                        modifier = Modifier.weight(1f),
-                    )
-                }
+                OutlinedTextField(
+                    value = titleDraft,
+                    onValueChange = { titleDraft = it },
+                    singleLine = true,
+                    placeholder = { Text(stringResource(R.string.recipe_title_hint)) },
+                    textStyle = Mdh1Style(),
+                    modifier = Modifier.fillMaxWidth(),
+                )
             } else {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text(
                         text = current.title,
-                        style = MaterialTheme.typography.headlineMedium,
-                        fontWeight = FontWeight.SemiBold,
+                        style = Mdh1Style(),
                         modifier = Modifier.weight(1f, fill = false),
                     )
                     TextButton(onClick = { historyOpen = true }) {
@@ -290,15 +288,8 @@ fun RecipeDetailScreen(
                 Spacer(Modifier.height(8.dp))
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text(
-                        text = "##",
-                        style = MaterialTheme.typography.titleMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.padding(end = 8.dp),
-                    )
-                    Text(
                         text = stringResource(R.string.recipe_edit_categories),
-                        style = MaterialTheme.typography.titleMedium,
-                        fontWeight = FontWeight.SemiBold,
+                        style = Mdh2Style(),
                     )
                     Spacer(Modifier.weight(1f))
                     TextButton(onClick = { categoryPickerOpen = true }) {
@@ -496,7 +487,7 @@ private fun IngredientSection(
             plain.forEach { line ->
                 Text(
                     text = line,
-                    style = MaterialTheme.typography.bodyLarge,
+                    style = MdBodyStyle(),
                     modifier = Modifier.padding(vertical = 2.dp),
                 )
             }
@@ -524,19 +515,9 @@ private fun Section(
 
 @Composable
 private fun SectionHeader(title: String, onEdit: (() -> Unit)?) {
-    Spacer(Modifier.height(20.dp))
+    Spacer(Modifier.height(24.dp))
     Row(verticalAlignment = Alignment.CenterVertically) {
-        Text(
-            text = "##",
-            style = MaterialTheme.typography.titleMedium,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-            modifier = Modifier.padding(end = 8.dp),
-        )
-        Text(
-            text = title,
-            style = MaterialTheme.typography.titleMedium,
-            fontWeight = FontWeight.SemiBold,
-        )
+        Text(text = title, style = Mdh2Style())
         if (onEdit != null) {
             Spacer(Modifier.weight(1f))
             TextButton(onClick = onEdit) {
@@ -589,10 +570,10 @@ private fun ContentLines(lines: List<ContentLine>) {
             ) {
                 Text(
                     text = "${counters[level]}.",
-                    style = MaterialTheme.typography.bodyLarge,
+                    style = MdBodyStyle(),
                     modifier = Modifier.width(28.dp),
                 )
-                Text(text = line.text, style = MaterialTheme.typography.bodyLarge)
+                Text(text = line.text, style = MdBodyStyle())
             }
         }
     }

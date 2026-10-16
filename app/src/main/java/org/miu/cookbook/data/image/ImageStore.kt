@@ -72,16 +72,29 @@ object ImageStore {
         }
     }
 
+    /**
+     * 只读尺寸。**注意 `inJustDecodeBounds = true` 时 `decodeStream` 的返回值就是 null**，
+     * 别拿它判断成败——要看 `outWidth/outHeight` 有没有被填上。
+     * （这里踩过坑：写成 `?: return null` 会让每一次导入都失败。）
+     */
+    private fun readBounds(openStream: () -> InputStream?): BitmapFactory.Options? {
+        val options = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+        val stream = openStream() ?: return null
+        stream.use { BitmapFactory.decodeStream(it, null, options) }
+        return if (options.outWidth > 0 && options.outHeight > 0) options else null
+    }
+
     // 统一走流：拍照得到的是临时文件，相册给的是 content Uri，两边都用同一条解码路径。
-    private fun save(openStream: () -> InputStream?, baseDir: File): ImportedImage? {
-        val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
-        openStream()?.use { BitmapFactory.decodeStream(it, null, bounds) } ?: return null
-        if (bounds.outWidth <= 0 || bounds.outHeight <= 0) return null
+    // 整段包在 runCatching 里：文件损坏、权限收回、内存不够都退回「读不出来」，别把界面炸掉。
+    private fun save(openStream: () -> InputStream?, baseDir: File): ImportedImage? = runCatching {
+        val bounds = readBounds(openStream) ?: return@runCatching null
 
         val options = BitmapFactory.Options().apply {
             inSampleSize = sampleSizeFor(bounds.outWidth, bounds.outHeight, MAX_EDGE)
         }
-        val decoded = openStream()?.use { BitmapFactory.decodeStream(it, null, options) } ?: return null
+        val decodeStream = openStream() ?: return@runCatching null
+        val decoded = decodeStream.use { BitmapFactory.decodeStream(it, null, options) }
+            ?: return@runCatching null
 
         val orientation = runCatching {
             openStream()?.use {
@@ -130,7 +143,7 @@ object ImageStore {
             width = targetWidth,
             height = targetHeight,
         )
-    }
+    }.getOrNull()
 
     /** 手机横着拍的照片方向信息在 EXIF 里，按它把像素转正，不然进详情页是歪的。 */
     private fun applyOrientation(bitmap: Bitmap, orientation: Int?): Bitmap {

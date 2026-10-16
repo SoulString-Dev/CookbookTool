@@ -44,7 +44,12 @@ import org.miu.cookbook.data.db.ContentSection
 import org.miu.cookbook.di.LocalAppContainer
 import org.miu.cookbook.domain.recipe.ContentLine
 import org.miu.cookbook.domain.recipe.ContentOutline
+import org.miu.cookbook.ui.recipes.MdBodyStyle
+import org.miu.cookbook.ui.recipes.Mdh3Style
 import org.miu.cookbook.ui.recipes.contentLines
+
+/** 输入框和序号共用的上边距，两边一致序号才不会飘。 */
+private val LineTopPadding = 10.dp
 
 /** 编辑中的一行：内容和层级都放在这里，保存时再变成 [ContentLine]。 */
 private data class LineDraft(
@@ -171,10 +176,11 @@ fun ContentEditScreen(
                     } else {
                         Text(
                             text = "${numbers.getOrElse(index) { 0 }}.",
-                            style = MaterialTheme.typography.bodyLarge,
+                            // 和输入框用同一档字号、同一个上边距，序号才会跟第一行文字对齐
+                            style = MdBodyStyle(),
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                             modifier = Modifier
-                                .padding(top = 18.dp)
+                                .padding(top = LineTopPadding)
                                 .width(28.dp),
                         )
                     }
@@ -196,10 +202,11 @@ fun ContentEditScreen(
                         }
                         drafts[index] = updated
                     },
+                    // 必须带颜色：BasicTextField 拿到没写颜色的样式会退回黑色，夜间模式就看不见了
                     textStyle = if (draft.isHeading) {
-                        MaterialTheme.typography.titleMedium
+                        Mdh3Style().copy(color = MaterialTheme.colorScheme.onSurface)
                     } else {
-                        MaterialTheme.typography.bodyLarge
+                        MdBodyStyle()
                     },
                     cursorBrush = androidx.compose.ui.graphics.SolidColor(MaterialTheme.colorScheme.primary),
                     keyboardOptions = KeyboardOptions(imeAction = ImeAction.Next),
@@ -231,7 +238,7 @@ fun ContentEditScreen(
                                 else -> false
                             }
                         }
-                        .padding(top = 10.dp, bottom = 10.dp),
+                        .padding(top = LineTopPadding, bottom = 10.dp),
                 )
                 }
             }

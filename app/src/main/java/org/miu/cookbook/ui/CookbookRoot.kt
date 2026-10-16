@@ -6,6 +6,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.List
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.DateRange
@@ -35,6 +36,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.navigation.NavGraph.Companion.findStartDestination
 import androidx.navigation.NavType
@@ -54,6 +56,7 @@ import org.miu.cookbook.ui.recipes.RecipeDetailScreen
 import org.miu.cookbook.ui.recipes.RecipeListScreen
 import org.miu.cookbook.ui.recipes.edit.ContentEditScreen
 import org.miu.cookbook.ui.recipes.edit.IngredientEditScreen
+import org.miu.cookbook.ui.theme.ThemeMode
 
 /** 侧边栏里的两个主界面。 */
 enum class MainDestination(
@@ -92,7 +95,10 @@ private fun contentEditRoute(recipeId: Long, section: ContentSection) =
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun CookbookRoot() {
+fun CookbookRoot(
+    themeMode: ThemeMode = ThemeMode.SYSTEM,
+    onThemeModeChange: (ThemeMode) -> Unit = {},
+) {
     val navController = rememberNavController()
     val drawerState = rememberDrawerState(DrawerValue.Closed)
     val scope = rememberCoroutineScope()
@@ -107,6 +113,28 @@ fun CookbookRoot() {
     var newRecipeRequested by remember { mutableStateOf(false) }
     var recordRequested by remember { mutableStateOf(false) }
     var recordingActive by remember { mutableStateOf(false) }
+
+    // 顶栏「⋮」里的「多选」：主界面用它进入多选，替掉了原来浮动栏上的编辑图标
+    var selectionRequested by remember { mutableStateOf(false) }
+
+    // 详情页把自己的菜名报上来，顶栏标题跟着变
+    var detailTitle by remember { mutableStateOf("") }
+
+    // 顶栏**常驻**：进详情页时不再整条消失（那样切换时闪一下很突兀），
+    // 只是把标题换成当前页面、把汉堡换成返回箭头。
+    val sectionName = backStackEntry?.arguments?.getString(ARG_CONTENT_SECTION)
+    val topTitle = when {
+        mainDestination != null -> stringResource(mainDestination.labelRes)
+        route == ROUTE_RECIPE_DETAIL -> detailTitle.ifBlank { stringResource(R.string.dest_recipes) }
+        route == ROUTE_INGREDIENT_EDIT -> stringResource(R.string.section_ingredients)
+        route == ROUTE_IMAGE_EDIT -> stringResource(R.string.image_edit_title)
+        route == ROUTE_CONTENT_EDIT -> when (sectionName) {
+            ContentSection.NOTE.name -> stringResource(R.string.section_notes)
+            else -> stringResource(R.string.section_directions)
+        }
+
+        else -> stringResource(R.string.app_name)
+    }
 
     ModalNavigationDrawer(
         drawerState = drawerState,
@@ -139,33 +167,61 @@ fun CookbookRoot() {
                         modifier = Modifier.padding(NavigationDrawerItemDefaults.ItemPadding),
                     )
                 }
+                Spacer(Modifier.weight(1f))
+                HorizontalDivider(Modifier.padding(horizontal = 28.dp))
+                Text(
+                    text = stringResource(R.string.theme_appearance),
+                    style = MaterialTheme.typography.labelMedium,
+                    fontWeight = FontWeight.Medium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(start = 28.dp, top = 16.dp, bottom = 4.dp),
+                )
+                ThemeMode.entries.forEach { mode ->
+                    NavigationDrawerItem(
+                        label = { Text(stringResource(mode.labelRes)) },
+                        selected = mode == themeMode,
+                        onClick = { onThemeModeChange(mode) },
+                        modifier = Modifier.padding(NavigationDrawerItemDefaults.ItemPadding),
+                    )
+                }
+                Spacer(Modifier.height(12.dp))
             }
         },
     ) {
         Scaffold(
             topBar = {
-                // 详情页有自己的返回栏，这里不显示
-                if (mainDestination != null) {
-                    TopAppBar(
-                        title = { Text(stringResource(mainDestination.labelRes)) },
-                        navigationIcon = {
+                TopAppBar(
+                    title = { Text(topTitle) },
+                    navigationIcon = {
+                        if (mainDestination != null) {
                             IconButton(onClick = { scope.launch { drawerState.open() } }) {
                                 Icon(
                                     imageVector = Icons.Filled.Menu,
                                     contentDescription = stringResource(R.string.drawer_open),
                                 )
                             }
-                        },
-                        actions = {
+                        } else {
+                            IconButton(onClick = { navController.popBackStack() }) {
+                                Icon(
+                                    imageVector = Icons.AutoMirrored.Filled.ArrowBack,
+                                    contentDescription = stringResource(R.string.action_back),
+                                )
+                            }
+                        }
+                    },
+                    actions = {
+                        // 备份、多选都只放在两个主界面上，详情页顶栏保持干净
+                        if (mainDestination != null) {
                             BackupMenu(
                                 repository = container.repository,
                                 onMessage = { message ->
                                     Toast.makeText(context, message, Toast.LENGTH_LONG).show()
                                 },
+                                onStartSelection = { selectionRequested = true },
                             )
-                        },
-                    )
-                }
+                        }
+                    },
+                )
             },
             floatingActionButton = {
                 if (route == MainDestination.Recipes.route) {
@@ -197,11 +253,15 @@ fun CookbookRoot() {
                         recordRequested = recordRequested,
                         onRecordRequestedHandled = { recordRequested = false },
                         onRecordingChanged = { recordingActive = it },
+                        selectionRequested = selectionRequested,
+                        onSelectionRequestedHandled = { selectionRequested = false },
                     )
                 }
                 composable(MainDestination.History.route) {
                     MealHistoryScreen(
                         onOpenRecipe = { navController.navigate(recipeDetailRoute(it)) },
+                        selectionRequested = selectionRequested,
+                        onSelectionRequestedHandled = { selectionRequested = false },
                     )
                 }
                 composable(
@@ -218,11 +278,11 @@ fun CookbookRoot() {
                     val startEditing = entry.arguments?.getBoolean(ARG_RECIPE_EDIT) ?: false
                     RecipeDetailScreen(
                         recipeId = recipeId,
-                        onBack = { navController.popBackStack() },
                         onEditIngredients = { navController.navigate(ingredientEditRoute(recipeId)) },
                         onEditContent = { section -> navController.navigate(contentEditRoute(recipeId, section)) },
                         onEditImages = { navController.navigate(imageEditRoute(recipeId)) },
                         startEditing = startEditing,
+                        onTitleChange = { detailTitle = it },
                     )
                 }
                 composable(
@@ -254,8 +314,8 @@ fun CookbookRoot() {
                     ),
                 ) { entry ->
                     val recipeId = entry.arguments?.getLong(ARG_RECIPE_ID) ?: return@composable
-                    val sectionName = entry.arguments?.getString(ARG_CONTENT_SECTION)
-                    val section = ContentSection.entries.firstOrNull { it.name == sectionName }
+                    val name = entry.arguments?.getString(ARG_CONTENT_SECTION)
+                    val section = ContentSection.entries.firstOrNull { it.name == name }
                         ?: return@composable
                     ContentEditScreen(
                         recipeId = recipeId,

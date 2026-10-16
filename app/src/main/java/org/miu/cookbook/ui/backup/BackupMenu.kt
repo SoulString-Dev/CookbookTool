@@ -5,6 +5,7 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Box
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.filled.Refresh
@@ -31,10 +32,11 @@ import org.miu.cookbook.R
 import org.miu.cookbook.data.CookbookRepository
 
 /**
- * 顶栏右侧的「⋮」：导出 / 导入备份。
+ * 顶栏右侧的「⋮」：多选 / 导出 / 导入。
  *
- * 侧边栏里只有「食谱」「饮食历史」两个主界面（需求就是这么定的），所以备份入口
- * 放在顶栏，不往侧边栏里塞第三项。
+ * 侧边栏里只有「食谱」「饮食历史」两个主界面（需求就是这么定的），所以这些入口
+ * 放在顶栏，不往侧边栏里塞。多选以前是浮动搜索栏上的一个编辑图标，现在收进这里，
+ * 两个主界面共用一套语义。
  *
  * 导出走 `CreateDocument`（用户挑存哪），导入走 `OpenDocument`——两边都用 SAF，
  * 不需要任何存储权限。导入是**整库替换**，所以先弹窗把「会覆盖掉什么」说清楚。
@@ -43,6 +45,7 @@ import org.miu.cookbook.data.CookbookRepository
 fun BackupMenu(
     repository: CookbookRepository,
     onMessage: (String) -> Unit,
+    onStartSelection: (() -> Unit)? = null,
     modifier: Modifier = Modifier,
 ) {
     val context = LocalContext.current
@@ -90,6 +93,16 @@ fun BackupMenu(
             )
         }
         DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
+            if (onStartSelection != null) {
+                DropdownMenuItem(
+                    text = { Text(stringResource(R.string.action_start_selection)) },
+                    leadingIcon = { Icon(Icons.Filled.Check, contentDescription = null) },
+                    onClick = {
+                        menuOpen = false
+                        onStartSelection()
+                    },
+                )
+            }
             DropdownMenuItem(
                 text = { Text(stringResource(R.string.backup_export)) },
                 leadingIcon = { Icon(Icons.Filled.Share, contentDescription = null) },

@@ -12,6 +12,9 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
@@ -19,10 +22,12 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowLeft
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.DateRange
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.AssistChip
-import androidx.compose.material3.DropdownMenu
-import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.DatePicker
+import androidx.compose.material3.DatePickerDialog
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -30,7 +35,9 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.rememberDatePickerState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -45,20 +52,141 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import coil3.compose.AsyncImage
-import kotlinx.coroutines.launch
 import java.io.File
 import java.time.LocalDate
 import java.time.LocalDateTime
+import kotlinx.coroutines.launch
 import org.miu.cookbook.R
 import org.miu.cookbook.data.CookbookRepository
 import org.miu.cookbook.domain.meal.MealSlot
 import org.miu.cookbook.domain.meal.MealTime
 
+/** 日期显示成「2025年3月5日」。 */
+private fun LocalDate.chineseText(): String = "${year}年${monthValue}月${dayOfMonth}日"
+
+private fun epochDayOf(date: LocalDate): Long = date.toEpochDay()
+
+/**
+ * 日历选日期。
+ *
+ * 左右箭头翻页只能一天天挪，跨月跨年很烦，所以另外给一个日历弹窗。
+ * `showModeToggle = false`：不要那个「手动输入」模式，免得弹窗里出现文本输入。
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun MealDatePickerDialog(
+    initial: LocalDate,
+    onPick: (LocalDate) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    val initialMillis = epochDayOf(initial) * MILLIS_PER_DAY
+    val state = rememberDatePickerState(initialSelectedDateMillis = initialMillis)
+
+    DatePickerDialog(
+        onDismissRequest = onDismiss,
+        confirmButton = {
+            TextButton(onClick = {
+                val millis = state.selectedDateMillis ?: initialMillis
+                onPick(LocalDate.ofEpochDay(millis / MILLIS_PER_DAY))
+            }) {
+                Text(stringResource(R.string.action_confirm))
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text(stringResource(R.string.action_cancel)) }
+        },
+    ) {
+        DatePicker(state = state, showModeToggle = false)
+    }
+}
+
+private const val MILLIS_PER_DAY = 86_400_000L
+
+/**
+ * 「哪一天 · 哪一餐」的选择器：日期可以按天翻、也可以点开日历挑，再加上早/午/晚三个 chip。
+ *
+ * 记录一顿和「把某顿改到别的日子」都用这一块，省得两处各写一遍。
+ */
+@Composable
+private fun MealDaySlotPicker(
+    date: LocalDate,
+    slot: MealSlot,
+    onDateChange: (LocalDate) -> Unit,
+    onSlotChange: (MealSlot) -> Unit,
+) {
+    var pickingDate by remember { mutableStateOf(false) }
+
+    Text(
+        text = stringResource(R.string.meal_record_date),
+        style = MaterialTheme.typography.labelLarge,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+    )
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        IconButton(onClick = { onDateChange(date.minusDays(1)) }) {
+            Icon(
+                imageVector = Icons.AutoMirrored.Filled.KeyboardArrowLeft,
+                contentDescription = stringResource(R.string.meal_date_prev),
+            )
+        }
+        // 点中间那个日期直接开日历，比一天天翻快得多
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier
+                .clip(RoundedCornerShape(10.dp))
+                .clickable { pickingDate = true }
+                .padding(horizontal = 8.dp, vertical = 4.dp),
+        ) {
+            Icon(
+                imageVector = Icons.Filled.DateRange,
+                contentDescription = stringResource(R.string.action_pick_date),
+                tint = MaterialTheme.colorScheme.primary,
+                modifier = Modifier.size(18.dp),
+            )
+            Spacer(Modifier.width(6.dp))
+            Text(text = date.chineseText(), style = MaterialTheme.typography.titleMedium)
+        }
+        IconButton(onClick = { onDateChange(date.plusDays(1)) }) {
+            Icon(
+                imageVector = Icons.AutoMirrored.Filled.KeyboardArrowRight,
+                contentDescription = stringResource(R.string.meal_date_next),
+            )
+        }
+    }
+
+    Spacer(Modifier.size(8.dp))
+    Text(
+        text = stringResource(R.string.meal_record_slot),
+        style = MaterialTheme.typography.labelLarge,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+    )
+    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        MealSlot.entries.forEach { candidate ->
+            FilterChip(
+                selected = candidate == slot,
+                onClick = { onSlotChange(candidate) },
+                label = { Text(candidate.label) },
+            )
+        }
+    }
+
+    if (pickingDate) {
+        MealDatePickerDialog(
+            initial = date,
+            onPick = {
+                onDateChange(it)
+                pickingDate = false
+            },
+            onDismiss = { pickingDate = false },
+        )
+    }
+}
+
 /**
  * 记录一顿：先挑日期和餐段，再确认。
  *
  * 默认值都来自「现在」：餐段按当前时段判，日期跟着餐段（只有凌晨的晚饭算前一天）。
- * 用户自己翻过日期之后，再改餐段就不再动日期了 —— 否则他刚翻到昨天又会被拽回今天。
+ * 用户自己翻过日期（或从日历里挑过）之后，再改餐段就不再动日期了 ——
+ * 否则他刚翻到昨天又会被拽回今天。
  *
  * 这个弹窗里没有输入框，所以 Robolectric 下可以正常测试（有输入框的弹窗会永远 idle 不下来）。
  */
@@ -87,49 +215,18 @@ fun RecordMealDialog(
                     fontWeight = FontWeight.SemiBold,
                 )
                 Spacer(Modifier.size(12.dp))
-
-                Text(
-                    text = stringResource(R.string.meal_record_date),
-                    style = MaterialTheme.typography.labelLarge,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    IconButton(onClick = {
-                        date = date.minusDays(1)
+                MealDaySlotPicker(
+                    date = date,
+                    slot = slot,
+                    onDateChange = {
+                        date = it
                         dateTouched = true
-                    }) {
-                        Icon(Icons.AutoMirrored.Filled.KeyboardArrowLeft, contentDescription = "前一天")
-                    }
-                    Text(
-                        text = "${date.year}年${date.monthValue}月${date.dayOfMonth}日",
-                        style = MaterialTheme.typography.titleMedium,
-                    )
-                    IconButton(onClick = {
-                        date = date.plusDays(1)
-                        dateTouched = true
-                    }) {
-                        Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, contentDescription = "后一天")
-                    }
-                }
-
-                Spacer(Modifier.size(8.dp))
-                Text(
-                    text = stringResource(R.string.meal_record_slot),
-                    style = MaterialTheme.typography.labelLarge,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    },
+                    onSlotChange = {
+                        slot = it
+                        if (!dateTouched) date = MealTime.dateFor(it, now)
+                    },
                 )
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    MealSlot.entries.forEach { candidate ->
-                        FilterChip(
-                            selected = candidate == slot,
-                            onClick = {
-                                slot = candidate
-                                if (!dateTouched) date = MealTime.dateFor(candidate, now)
-                            },
-                            label = { Text(candidate.label) },
-                        )
-                    }
-                }
             }
         },
         confirmButton = {
@@ -150,7 +247,12 @@ fun RecordMealDialog(
     )
 }
 
-/** 某道菜自己的饮食历史，按时间倒序（详情页「查看饮食历史」）。 */
+/**
+ * 某道菜自己的饮食历史（详情页「查看饮食历史」）。
+ *
+ * 正序排（早的在上），但**打开就停在最下面**：最新的一条立刻能看到，
+ * 想看更早的往上拖。跟饮食历史主界面是同一个手感。
+ */
 @Composable
 fun RecipeMealHistoryDialog(
     recipeId: Long,
@@ -160,6 +262,12 @@ fun RecipeMealHistoryDialog(
 ) {
     val rows by remember(recipeId) { repository.mealHistoryOf(recipeId) }
         .collectAsStateWithLifecycle(initialValue = emptyList())
+    val listState = rememberLazyListState()
+
+    // 等第一帧把列表铺好再滚到底，否则 scrollToItem 找不到目标
+    LaunchedEffect(rows.size) {
+        if (rows.isNotEmpty()) listState.scrollToItem(rows.lastIndex)
+    }
 
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -168,11 +276,10 @@ fun RecipeMealHistoryDialog(
             if (rows.isEmpty()) {
                 Text(stringResource(R.string.meal_history_empty))
             } else {
-                Column(Modifier.heightIn(max = 360.dp).verticalScroll(rememberScrollState())) {
-                    rows.forEach { row ->
-                        val date = LocalDate.ofEpochDay(row.epochDay)
+                LazyColumn(state = listState, modifier = Modifier.heightIn(max = 360.dp)) {
+                    items(rows, key = { it.logId }) { row ->
                         Text(
-                            text = "${date.year}年${date.monthValue}月${date.dayOfMonth}日 · ${row.slot.label}",
+                            text = "${LocalDate.ofEpochDay(row.epochDay).chineseText()} · ${row.slot.label}",
                             style = MaterialTheme.typography.bodyLarge,
                             modifier = Modifier.padding(vertical = 6.dp),
                         )
@@ -232,10 +339,10 @@ fun DayDetailDialog(
 }
 
 /**
- * 编辑某一天的记录：把某一餐整体改到别的餐段（冲突就互换），或者删掉其中一道菜。
+ * 编辑某一天的记录：把某一餐**改到任意一天的任意一餐**（记错日期是最常见的手滑），
+ * 或者删掉其中一道菜。
  *
- * 每顿都是「整份换」而不是逐条改时间，跟需求里说的「三顿饭的时间」是一回事：
- * 一顿饭里的几道菜本来就是同一顿饭。
+ * 一顿饭里的几道菜永远是整份一起动；目标那一餐如果已经有记录，就并进去，不覆盖也不交换。
  */
 @Composable
 fun DayEditDialog(
@@ -244,7 +351,8 @@ fun DayEditDialog(
     onDismiss: () -> Unit,
 ) {
     val scope = rememberCoroutineScope()
-    var moveTarget by remember { mutableStateOf<MealSlot?>(null) }
+    var moving by remember { mutableStateOf<MealSlot?>(null) }
+    val fromDate = LocalDate.ofEpochDay(day.epochDay)
 
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -268,32 +376,10 @@ fun DayEditDialog(
                             color = MaterialTheme.colorScheme.primary,
                         )
                         Spacer(Modifier.width(8.dp))
-                        Box {
-                            AssistChip(
-                                onClick = { moveTarget = slot },
-                                label = { Text(stringResource(R.string.meal_move_to)) },
-                            )
-                            DropdownMenu(
-                                expanded = moveTarget == slot,
-                                onDismissRequest = { moveTarget = null },
-                            ) {
-                                MealSlot.entries.filter { it != slot }.forEach { target ->
-                                    DropdownMenuItem(
-                                        text = { Text(target.label) },
-                                        onClick = {
-                                            moveTarget = null
-                                            scope.launch {
-                                                repository.moveMealSlot(
-                                                    day.epochDay,
-                                                    slot,
-                                                    target,
-                                                )
-                                            }
-                                        },
-                                    )
-                                }
-                            }
-                        }
+                        AssistChip(
+                            onClick = { moving = slot },
+                            label = { Text(stringResource(R.string.meal_move_to)) },
+                        )
                     }
                     entries.forEach { entry ->
                         Row(
@@ -321,6 +407,74 @@ fun DayEditDialog(
         },
         confirmButton = {
             TextButton(onClick = onDismiss) { Text(stringResource(R.string.action_done)) }
+        },
+    )
+
+    moving?.let { fromSlot ->
+        // 默认落在另一餐，用户要是只想换个餐段就不用再点一次
+        val defaultSlot = if (fromSlot == MealSlot.BREAKFAST) MealSlot.LUNCH else MealSlot.BREAKFAST
+        MoveMealDialog(
+            fromDate = fromDate,
+            fromSlot = fromSlot,
+            defaultDate = fromDate,
+            defaultSlot = defaultSlot,
+            onConfirm = { toDate, toSlot ->
+                moving = null
+                if (epochDayOf(toDate) != day.epochDay || toSlot != fromSlot) {
+                    scope.launch {
+                        repository.moveMealSlotTo(
+                            fromDay = day.epochDay,
+                            fromSlot = fromSlot,
+                            toDay = epochDayOf(toDate),
+                            toSlot = toSlot,
+                        )
+                    }
+                }
+            },
+            onDismiss = { moving = null },
+        )
+    }
+}
+
+/** 「这三道菜改到哪一天哪一餐」的小弹窗。 */
+@Composable
+private fun MoveMealDialog(
+    fromDate: LocalDate,
+    fromSlot: MealSlot,
+    defaultDate: LocalDate,
+    defaultSlot: MealSlot,
+    onConfirm: (toDate: LocalDate, toSlot: MealSlot) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    var date by remember { mutableStateOf(defaultDate) }
+    var slot by remember { mutableStateOf(defaultSlot) }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(stringResource(R.string.meal_move_title)) },
+        text = {
+            Column {
+                Text(
+                    text = stringResource(R.string.meal_move_from, fromDate.chineseText(), fromSlot.label),
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Spacer(Modifier.size(8.dp))
+                MealDaySlotPicker(
+                    date = date,
+                    slot = slot,
+                    onDateChange = { date = it },
+                    onSlotChange = { slot = it },
+                )
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = { onConfirm(date, slot) }) {
+                Text(stringResource(R.string.meal_move_confirm))
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text(stringResource(R.string.action_cancel)) }
         },
     )
 }

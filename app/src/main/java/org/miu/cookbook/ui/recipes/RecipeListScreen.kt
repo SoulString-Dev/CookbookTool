@@ -1,5 +1,6 @@
 package org.miu.cookbook.ui.recipes
 
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
@@ -20,7 +21,6 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.List
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Close
-import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.HorizontalDivider
@@ -44,6 +44,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextOverflow
@@ -63,8 +64,9 @@ private val TopBarArea = 80.dp
 
 /**
  * 食谱列表页：
- * 顶部浮动搜索栏（右侧编辑按钮进多选），列表项点开详情、长按弹菜单，
- * 多选时可以批量设分类或删除。
+ * 顶部浮动搜索栏，列表项点开详情、长按弹菜单，多选时可以批量设分类或删除。
+ *
+ * 进多选不再是搜索栏上的编辑图标，而是顶栏「⋮」菜单里的「多选」（[selectionRequested]）。
  */
 @Composable
 fun RecipeListScreen(
@@ -77,11 +79,15 @@ fun RecipeListScreen(
     onRecordRequestedHandled: () -> Unit = {},
     /** 把「现在在不在记录模式」告诉外面，让右下角加号知道自己是哪一个含义。 */
     onRecordingChanged: (Boolean) -> Unit = {},
+    /** 顶栏「⋮」里点了「多选」。 */
+    selectionRequested: Boolean = false,
+    onSelectionRequestedHandled: () -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     val container = LocalAppContainer.current
     val repository = container.repository
     val scope = rememberCoroutineScope()
+    val focusManager = LocalFocusManager.current
 
     val rows by repository.recipeList.collectAsStateWithLifecycle(initialValue = emptyList())
     val allItems = remember(rows) { rows.map { it.toListItem(container.filesDir) } }
@@ -116,12 +122,37 @@ fun RecipeListScreen(
 
     LaunchedEffect(recording) { onRecordingChanged(recording) }
 
+    // 顶栏「⋮」→「多选」：等价于以前搜索栏上的编辑按钮
+    LaunchedEffect(selectionRequested) {
+        if (selectionRequested) {
+            selecting = true
+            selectedIds = emptySet()
+            onSelectionRequestedHandled()
+        }
+    }
+
     // 加号在非编辑态的另一层含义：进记录模式
     LaunchedEffect(recordRequested) {
         if (recordRequested) {
             recording = true
             recordQuery = ""
             onRecordRequestedHandled()
+        }
+    }
+
+    // 安卓返回键：先按「记录 → 多选 → 搜索」的顺序收摊，不要一按就退到桌面
+    BackHandler(enabled = recording || selecting || query.isNotEmpty()) {
+        when {
+            recording -> recording = false
+            selecting -> {
+                selecting = false
+                selectedIds = emptySet()
+            }
+
+            else -> {
+                query = ""
+                focusManager.clearFocus()
+            }
         }
     }
 
@@ -194,7 +225,6 @@ fun RecipeListScreen(
                 RecipeSearchBar(
                     query = query,
                     onQueryChange = { query = it },
-                    onStartSelection = { selecting = true },
                     modifier = Modifier.align(Alignment.TopCenter),
                 )
             }
@@ -227,6 +257,8 @@ fun RecipeListScreen(
 
     if (showNewRecipe) {
         NewRecipeDialog(
+            // 搜索栏（记录模式下是记录面板的搜索框）里有字就拿它当菜名，省得再打一遍
+            initialTitle = if (recordAfterCreate) recordQuery else query,
             onDismiss = {
                 showNewRecipe = false
                 showNewRecipeInRecord = false
@@ -253,6 +285,7 @@ fun RecipeListScreen(
 
     if (showNewRecipeInRecord) {
         NewRecipeDialog(
+            initialTitle = recordQuery,
             onDismiss = { showNewRecipeInRecord = false },
             onCreate = { title ->
                 showNewRecipeInRecord = false
@@ -315,12 +348,11 @@ fun RecipeListScreen(
 
 private fun Set<Long>.toggle(id: Long): Set<Long> = if (id in this) this - id else this + id
 
-/** 浮在列表上方的搜索栏：左边搜索框，右边进多选的编辑按钮。 */
+/** 浮在列表上方的搜索栏。多选入口已经收进顶栏的「⋮」菜单，这里只剩搜索。 */
 @Composable
 private fun RecipeSearchBar(
     query: String,
     onQueryChange: (String) -> Unit,
-    onStartSelection: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     Surface(
@@ -332,37 +364,29 @@ private fun RecipeSearchBar(
         tonalElevation = 2.dp,
         shadowElevation = 3.dp,
     ) {
-        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(end = 4.dp)) {
-            OutlinedTextField(
-                value = query,
-                onValueChange = onQueryChange,
-                singleLine = true,
-                placeholder = { Text(stringResource(R.string.search_placeholder)) },
-                leadingIcon = { Icon(Icons.Filled.Search, contentDescription = null) },
-                trailingIcon = {
-                    if (query.isNotEmpty()) {
-                        IconButton(onClick = { onQueryChange("") }) {
-                            Icon(
-                                imageVector = Icons.Filled.Close,
-                                contentDescription = stringResource(R.string.search_clear),
-                            )
-                        }
+        OutlinedTextField(
+            value = query,
+            onValueChange = onQueryChange,
+            singleLine = true,
+            placeholder = { Text(stringResource(R.string.search_placeholder)) },
+            leadingIcon = { Icon(Icons.Filled.Search, contentDescription = null) },
+            trailingIcon = {
+                if (query.isNotEmpty()) {
+                    IconButton(onClick = { onQueryChange("") }) {
+                        Icon(
+                            imageVector = Icons.Filled.Close,
+                            contentDescription = stringResource(R.string.search_clear),
+                        )
                     }
-                },
-                shape = RoundedCornerShape(28.dp),
-                colors = OutlinedTextFieldDefaults.colors(
-                    focusedBorderColor = MaterialTheme.colorScheme.primary,
-                    unfocusedBorderColor = MaterialTheme.colorScheme.outlineVariant,
-                ),
-                modifier = Modifier.weight(1f),
-            )
-            IconButton(onClick = onStartSelection) {
-                Icon(
-                    imageVector = Icons.Filled.Edit,
-                    contentDescription = stringResource(R.string.action_start_selection),
-                )
-            }
-        }
+                }
+            },
+            shape = RoundedCornerShape(28.dp),
+            colors = OutlinedTextFieldDefaults.colors(
+                focusedBorderColor = MaterialTheme.colorScheme.primary,
+                unfocusedBorderColor = MaterialTheme.colorScheme.outlineVariant,
+            ),
+            modifier = Modifier.fillMaxWidth(),
+        )
     }
 }
 

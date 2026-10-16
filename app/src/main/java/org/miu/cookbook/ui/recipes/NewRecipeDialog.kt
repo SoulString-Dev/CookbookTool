@@ -26,13 +26,16 @@ import org.miu.cookbook.R
 /**
  * 新建食谱：只问菜名，至少写了菜名才让存。
  * 菜名不写进正文，正文里的一级标题是显示时生成的。
+ *
+ * [initialTitle] 用来把搜索栏里已经打好的字带进来（在记录模式下按加号时很顺手）。
  */
 @Composable
 fun NewRecipeDialog(
     onDismiss: () -> Unit,
     onCreate: (String) -> Unit,
+    initialTitle: String = "",
 ) {
-    var title by remember { mutableStateOf("") }
+    var title by remember { mutableStateOf(initialTitle) }
     var showError by remember { mutableStateOf(false) }
     val trimmed = title.trim()
 

@@ -6,7 +6,6 @@ import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.hasSetTextAction
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onAllNodesWithText
-import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performTextInput
@@ -55,6 +54,7 @@ class RecipeListScreenTest {
 
     private fun launch(
         newRecipeRequested: Boolean = false,
+        selectionRequested: Boolean = false,
         onOpen: (Long) -> Unit = {},
     ) {
         val c = container
@@ -66,6 +66,8 @@ class RecipeListScreenTest {
                         onEditRecipe = {},
                         newRecipeRequested = newRecipeRequested,
                         onNewRecipeHandled = {},
+                        selectionRequested = selectionRequested,
+                        onSelectionRequestedHandled = {},
                     )
                 }
             }
@@ -103,12 +105,13 @@ class RecipeListScreenTest {
     }
 
     @Test
-    fun `编辑按钮进多选，批量删除`() {
+    fun `顶栏进了多选之后可以批量删除`() {
         seed("番茄炒蛋", "土豆丝")
-        launch()
+        // 多选入口已经搬到顶栏「⋮」菜单里（那个按钮在 CookbookRoot 里），
+        // 这里直接把「已经请求进多选」当输入喂进来，测的还是选择与删除本身。
+        launch(selectionRequested = true)
         waitForText("番茄炒蛋")
 
-        compose.onNodeWithContentDescription("多选").performClick()
         compose.onNodeWithText("番茄炒蛋").performClick()
         compose.onNodeWithText("土豆丝").performClick()
         compose.onNodeWithText("已选 2 项").assertIsDisplayed()

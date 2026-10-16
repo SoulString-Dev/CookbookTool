@@ -22,6 +22,13 @@
     <string name="action_save">保存</string>
     <string name="action_done">完成</string>
     <string name="action_start_selection">多选</string>
+    <!-- 外观（侧边栏底部） -->
+    <string name="theme_appearance">外观</string>
+    <string name="theme_system">跟随系统</string>
+    <string name="theme_light">日间模式</string>
+    <string name="theme_dark">夜间模式</string>
+    <string name="action_pick_date">选日期</string>
+    <string name="action_picked">已选</string>
 
     <!-- 搜索栏 -->
     <string name="search_placeholder">搜菜名、分类或原料</string>
@@ -135,7 +142,14 @@
     <string name="meal_day_delete_message">这一天有 %1$d 条记录，删掉就找不回来了。</string>
     <string name="meal_entry_delete">删掉这道菜</string>
     <string name="meal_move_to">改到</string>
-    <string name="meal_move_hint">换到另一餐时，如果那餐已经有记录，两边会互换。</string>
+    <string name="meal_move_hint">把某一餐改到别的日子、别的餐段都行；那边要是已经有记录，这几道菜会并进去。</string>
+    <string name="meal_move_title">改到哪一天哪一餐</string>
+    <string name="meal_move_confirm">改到这一天</string>
+    <string name="meal_edit_slot">这顿改到</string>
+    <string name="meal_edit_date">这天改到</string>
+    <string name="meal_date_prev">前一天</string>
+    <string name="meal_date_next">后一天</string>
+    <string name="meal_move_from">现在：%1$s %2$s</string>
     <string name="meal_history_delete_title">删除饮食记录</string>
     <string name="meal_history_delete_message">确定删除选中的 %1$d 天记录吗？</string>
     <string name="meal_history_selection_none">点日期来选</string>

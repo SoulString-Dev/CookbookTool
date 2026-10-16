@@ -309,7 +309,7 @@ class CookbookRepositoryTest {
     }
 
     @Test
-    fun `改餐段时目标那餐已经有记录就互换`() {
+    fun `改到已经有记录的那一餐时并进去，不覆盖也不交换`() {
         val a = runBlocking { repository.createRecipe("豆浆") }
         val b = runBlocking { repository.createRecipe("面条") }
         runBlocking {
@@ -317,21 +317,33 @@ class CookbookRepositoryTest {
             repository.logMeal(b, day(0), MealSlot.DINNER)
         }
 
-        runBlocking { repository.moveMealSlot(day(0), MealSlot.BREAKFAST, MealSlot.DINNER) }
+        runBlocking { repository.moveMealSlotTo(day(0), MealSlot.BREAKFAST, day(0), MealSlot.DINNER) }
 
-        val byRecipe = history().associate { it.recipeId to it.slot }
-        assertEquals(MealSlot.DINNER, byRecipe[a])
-        assertEquals(MealSlot.BREAKFAST, byRecipe[b])
+        val rows = history()
+        assertEquals(2, rows.size)
+        assertEquals(listOf(MealSlot.DINNER, MealSlot.DINNER), rows.map { it.slot })
     }
 
     @Test
-    fun `改餐段到空着的那一餐时只是搬过去`() {
+    fun `改到空着的那一餐时只是搬过去`() {
         val a = runBlocking { repository.createRecipe("豆浆") }
         runBlocking { repository.logMeal(a, day(0), MealSlot.BREAKFAST) }
 
-        runBlocking { repository.moveMealSlot(day(0), MealSlot.BREAKFAST, MealSlot.LUNCH) }
+        runBlocking { repository.moveMealSlotTo(day(0), MealSlot.BREAKFAST, day(0), MealSlot.LUNCH) }
 
         assertEquals(MealSlot.LUNCH, history().single().slot)
+    }
+
+    @Test
+    fun `记错日期可以把某一餐改到别的日子`() {
+        val a = runBlocking { repository.createRecipe("豆浆") }
+        runBlocking { repository.logMeal(a, day(0), MealSlot.BREAKFAST) }
+
+        runBlocking { repository.moveMealSlotTo(day(0), MealSlot.BREAKFAST, day(5), MealSlot.DINNER) }
+
+        val row = history().single()
+        assertEquals(day(5), row.epochDay)
+        assertEquals(MealSlot.DINNER, row.slot)
     }
 
     @Test
@@ -364,7 +376,7 @@ class CookbookRepositoryTest {
     }
 
     @Test
-    fun `某道菜自己的历史按时间倒序`() {
+    fun `某道菜自己的历史按时间正序`() {
         val a = runBlocking { repository.createRecipe("番茄炒蛋") }
         val b = runBlocking { repository.createRecipe("土豆丝") }
         runBlocking {
@@ -374,7 +386,8 @@ class CookbookRepositoryTest {
         }
 
         val rows = runBlocking { repository.mealHistoryOf(a).first() }
-        assertEquals(listOf(day(0), day(3)), rows.map { it.epochDay })
+        // 正序：早的在前（详情页打开时会自己滚到底，最新那条照样一眼看到）
+        assertEquals(listOf(day(3), day(0)), rows.map { it.epochDay })
         assertEquals(listOf(a, a), rows.map { it.recipeId })
     }
 

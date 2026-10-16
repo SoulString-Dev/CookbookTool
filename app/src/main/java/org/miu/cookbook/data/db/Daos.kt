@@ -191,7 +191,7 @@ abstract class MealLogDao {
         FROM meal_log m
         JOIN recipe r ON r.id = m.recipe_id
         WHERE m.recipe_id = :recipeId
-        ORDER BY m.epoch_day DESC, m.created_at DESC, m.id DESC
+        ORDER BY m.epoch_day ASC, m.created_at ASC, m.id ASC
         """,
     )
     abstract fun observeForRecipe(recipeId: Long): Flow<List<MealLogRow>>
@@ -228,17 +228,18 @@ abstract class MealLogDao {
     abstract suspend fun countForRecipes(recipeIds: List<Long>): Int
 
     /**
-     * 把某天的一餐整体挪到另一餐；目标那餐已经有记录时**交换**（需求里就是这么定的），
-     * 这样不会出现两餐内容叠在一起、也不会丢记录。
+     * 把某天的一餐整体挪到**任意一天的任意一餐**（记错日期是最常见的手滑）。
+     *
+     * 目标那边已经有记录时不覆盖、也不交换，而是并进去：一顿饭本来就可以有好几道菜。
+     * 一条 UPDATE 就够了，不需要先查再写。
      */
-    @Transaction
-    open suspend fun moveSlot(day: Long, from: MealSlot, to: MealSlot) {
-        if (from == to) return
-        val sources = forSlot(day, from)
-        val targets = forSlot(day, to)
-        targets.forEach { updateSlot(it.id, from) }
-        sources.forEach { updateSlot(it.id, to) }
-    }
+    @Query("UPDATE meal_log SET epoch_day = :toDay, slot = :toSlot WHERE epoch_day = :fromDay AND slot = :fromSlot")
+    abstract suspend fun moveSlotTo(
+        fromDay: Long,
+        fromSlot: MealSlot,
+        toDay: Long,
+        toSlot: MealSlot,
+    ): Int
 
     /** 未来做“按上次吃的时间加权随机”要用：每道菜最后一次被吃的日子。 */
     @Query("SELECT recipe_id, MAX(epoch_day) AS last_day FROM meal_log GROUP BY recipe_id")
