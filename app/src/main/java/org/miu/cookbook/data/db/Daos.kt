@@ -87,6 +87,38 @@ abstract class RecipeDao {
 
     @Query("UPDATE recipe SET updated_at = :updatedAt WHERE id = :id")
     abstract suspend fun touch(id: Long, updatedAt: Long)
+
+    // ---------- 备份：整份读出 / 整份写回 ----------
+    //
+    // 导入是「清空 + 按原 id 写回」，所以这些插入都用 REPLACE：
+    // id 保持原样，食谱-分类-图片-饮食记录之间的引用才不会错位。
+
+    @Query("SELECT * FROM recipe ORDER BY id")
+    abstract suspend fun allRecipes(): List<RecipeEntity>
+
+    @Query("SELECT * FROM ingredient ORDER BY recipe_id, sort_order, id")
+    abstract suspend fun allIngredients(): List<IngredientEntity>
+
+    @Query("SELECT * FROM content_block ORDER BY recipe_id, section, sort_order, id")
+    abstract suspend fun allContentBlocks(): List<ContentBlockEntity>
+
+    @Query("SELECT * FROM recipe_category")
+    abstract suspend fun allRecipeCategories(): List<RecipeCategoryCrossRef>
+
+    @Query("SELECT * FROM recipe_image ORDER BY recipe_id, sort_order, id")
+    abstract suspend fun allRecipeImages(): List<RecipeImageEntity>
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    abstract suspend fun insertRecipes(items: List<RecipeEntity>)
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    abstract suspend fun insertAllIngredients(items: List<IngredientEntity>)
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    abstract suspend fun insertAllContentBlocks(items: List<ContentBlockEntity>)
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    abstract suspend fun insertAllLinks(items: List<RecipeCategoryCrossRef>)
 }
 
 @Dao
@@ -115,6 +147,12 @@ interface CategoryDao {
 
     @Query("SELECT category_id FROM recipe_category WHERE recipe_id = :recipeId")
     suspend fun linkedCategoryIds(recipeId: Long): List<Long>
+
+    @Query("SELECT * FROM category ORDER BY sort_order, id")
+    suspend fun allCategories(): List<CategoryEntity>
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertAll(items: List<CategoryEntity>)
 }
 
 @Dao
@@ -205,6 +243,12 @@ abstract class MealLogDao {
     /** 未来做“按上次吃的时间加权随机”要用：每道菜最后一次被吃的日子。 */
     @Query("SELECT recipe_id, MAX(epoch_day) AS last_day FROM meal_log GROUP BY recipe_id")
     abstract suspend fun lastCookedDays(): List<RecipeLastCooked>
+
+    @Query("SELECT * FROM meal_log ORDER BY id")
+    abstract suspend fun allLogs(): List<MealLogEntity>
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    abstract suspend fun insertAllLogs(items: List<MealLogEntity>)
 }
 
 data class RecipeLastCooked(
@@ -240,4 +284,7 @@ interface RecipeImageDao {
         "UPDATE recipe_image SET thumb_path = :thumbPath WHERE recipe_id = :recipeId AND path = :path",
     )
     suspend fun updateThumbPath(recipeId: Long, path: String, thumbPath: String)
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertAll(items: List<RecipeImageEntity>)
 }

@@ -1,3 +1,4 @@
+import java.util.Properties
 import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 
 plugins {
@@ -5,6 +6,18 @@ plugins {
     alias(libs.plugins.kotlin.android)
     alias(libs.plugins.kotlin.compose)
     alias(libs.plugins.ksp)
+    alias(libs.plugins.kotlin.serialization)
+}
+
+/**
+ * 正式包的签名：口令放在工作区的 keystore.properties 里（已 gitignore）。
+ * 文件不在（比如别人 clone 下来）就退回 debug 签名——只是个本地工具，
+ * 与其让 assembleRelease 直接失败，不如给一个装得上、只是签名不同的包。
+ */
+val keystorePropsFile = rootProject.file("keystore.properties")
+val hasReleaseKeystore = keystorePropsFile.exists()
+val keystoreProps = Properties().apply {
+    if (hasReleaseKeystore) keystorePropsFile.inputStream().use { load(it) }
 }
 
 android {
@@ -16,8 +29,19 @@ android {
         minSdk = 26
         targetSdk = 35
         versionCode = 1
-        versionName = "0.1.0"
+        versionName = "1.0.0"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+    }
+
+    signingConfigs {
+        if (hasReleaseKeystore) {
+            create("release") {
+                storeFile = rootProject.file(keystoreProps.getProperty("storeFile"))
+                storePassword = keystoreProps.getProperty("storePassword")
+                keyAlias = keystoreProps.getProperty("keyAlias")
+                keyPassword = keystoreProps.getProperty("keyPassword")
+            }
+        }
     }
 
     buildTypes {
@@ -26,11 +50,17 @@ android {
             versionNameSuffix = "-debug"
         }
         release {
+            // 暂不开 R8：序列化/Room 的 keep 规则没有真机可验证，压缩出问题只有运行时才发现
             isMinifyEnabled = false
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro",
             )
+            signingConfig = if (hasReleaseKeystore) {
+                signingConfigs.getByName("release")
+            } else {
+                signingConfigs.getByName("debug")
+            }
         }
     }
 
@@ -86,6 +116,7 @@ dependencies {
 
     implementation(libs.coil.compose)
     implementation(libs.androidx.exifinterface)
+    implementation(libs.kotlinx.serialization.json)
 
     testImplementation(libs.junit)
     testImplementation(libs.kotlinx.coroutines.test)

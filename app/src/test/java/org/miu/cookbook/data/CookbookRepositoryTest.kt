@@ -3,12 +3,17 @@ package org.miu.cookbook.data
 import android.content.Context
 import androidx.room.Room
 import androidx.test.core.app.ApplicationProvider
+import java.io.ByteArrayInputStream
+import java.io.ByteArrayOutputStream
+import java.io.File
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertThrows
+import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -44,13 +49,7 @@ class CookbookRepositoryTest {
         val context = ApplicationProvider.getApplicationContext<Context>()
         db = Room.inMemoryDatabaseBuilder(context, AppDatabase::class.java).build()
         baseDir = context.filesDir
-        repository = CookbookRepository(
-            db.recipeDao(),
-            db.categoryDao(),
-            db.mealLogDao(),
-            db.imageDao(),
-            baseDir,
-        )
+        repository = CookbookRepository(db, baseDir)
     }
 
     @After
@@ -391,6 +390,142 @@ class CookbookRepositoryTest {
         runBlocking { repository.deleteRecipes(listOf(a)) }
 
         assertEquals(listOf(b), history().map { it.recipeId })
+    }
+
+
+    // ---------- 备份 ----------
+
+    /** 造一份「什么都有」的数据：分类、原料、正文、真图、饮食记录。 */
+    private suspend fun seedEverything(): Long {
+        val recipeId = repository.createRecipe("番茄炒蛋")
+        repository.setCategories(recipeId, setOf(repository.ensureCategory("家常菜")))
+        repository.setIngredients(
+            recipeId,
+            listOf(IngredientLine("鸡蛋", "2", "个"), IngredientLine("番茄", "3", "个")),
+        )
+        repository.setContent(
+            recipeId,
+            ContentSection.DIRECTIONS,
+            listOf(ContentLine("打蛋", 0), ContentLine("下锅", 1)),
+        )
+        repository.setContent(
+            recipeId,
+            ContentSection.NOTE,
+            listOf(ContentLine("火候", 0, isHeading = true)),
+        )
+        // 图片要真的落在磁盘上，导入时才不会被当成「文件丢了」丢掉
+        File(baseDir, "images").mkdirs()
+        File(baseDir, "thumbs").mkdirs()
+        File(baseDir, "images/real.jpg").writeBytes(byteArrayOf(1, 2, 3))
+        File(baseDir, "thumbs/real.jpg").writeBytes(byteArrayOf(9))
+        repository.addImage(recipeId, imported("real"))
+        repository.logMeal(recipeId, day(0), MealSlot.DINNER)
+        repository.logMeal(recipeId, day(1), MealSlot.BREAKFAST)
+        return recipeId
+    }
+
+    @Test
+    fun `导出再导入，菜名分类原料正文图片和饮食记录都回来了`() = runBlocking {
+        val recipeId = seedEverything()
+        val expectedDetail = detailOf(recipeId)
+
+        val bytes = ByteArrayOutputStream()
+            .also { repository.exportBackup(it) }
+            .toByteArray()
+
+        // 先清空，证明后面看到的东西都是导入带回来的
+        repository.deleteRecipes(listOf(recipeId))
+        assertTrue(repository.recipeList.first().isEmpty())
+
+        repository.importBackup(ByteArrayInputStream(bytes))
+
+        val list = repository.recipeList.first()
+        assertEquals(1, list.size)
+        val row = list.single()
+        assertEquals(recipeId, row.recipe.id)          // id 原样保留
+        assertEquals("番茄炒蛋", row.recipe.title)
+        assertEquals(listOf("家常菜"), row.categories.map { it.name })
+        assertEquals(listOf("鸡蛋", "番茄"), row.ingredients.map { it.name })
+
+        val detail = detailOf(recipeId)
+        assertEquals(
+            listOf(ContentLine("打蛋", 0), ContentLine("下锅", 1)),
+            detail.contentLines(ContentSection.DIRECTIONS),
+        )
+        assertEquals(
+            listOf(ContentLine("火候", 0, isHeading = true)),
+            detail.contentLines(ContentSection.NOTE),
+        )
+
+        assertEquals(1, detail.images.size)
+        assertEquals("images/real.jpg", detail.images.single().path)
+        assertTrue(detail.images.single().isCover)
+        assertTrue(File(baseDir, "images/real.jpg").isFile)
+
+        assertEquals(2, history().size)
+        assertEquals(listOf(MealSlot.BREAKFAST, MealSlot.DINNER), history().map { it.slot })
+        assertEquals(expectedDetail.recipe.title, history().first().title)
+    }
+
+    @Test
+    fun `导入是整库替换，旧数据不会留下来`() = runBlocking {
+        val keep = seedEverything()
+        val bytes = ByteArrayOutputStream()
+            .also { repository.exportBackup(it) }
+            .toByteArray()
+
+        // 导出之后再添一道菜，导入后它应该消失
+        val extra = repository.createRecipe("导出之后才加的菜")
+        assertEquals(2, repository.recipeList.first().size)
+
+        repository.importBackup(ByteArrayInputStream(bytes))
+
+        assertEquals(listOf(keep), repository.recipeList.first().map { it.recipe.id })
+    }
+
+    @Test
+    fun `导入会把图片目录换成备份里的那一份`() = runBlocking {
+        seedEverything()
+        val bytes = ByteArrayOutputStream()
+            .also { repository.exportBackup(it) }
+            .toByteArray()
+
+        // 模拟「换了台设备」：本地图片全没了
+        File(baseDir, "images").deleteRecursively()
+        File(baseDir, "thumbs").deleteRecursively()
+        assertFalse(File(baseDir, "images/real.jpg").isFile)
+
+        repository.importBackup(ByteArrayInputStream(bytes))
+
+        assertTrue(File(baseDir, "images/real.jpg").isFile)
+        assertTrue(File(baseDir, "thumbs/real.jpg").isFile)
+        assertFalse(File(baseDir, "restore-tmp").exists())
+    }
+
+    @Test
+    fun `备份里没有的图片文件，导入时那条记录会被丢掉而不是报错`() = runBlocking {
+        val recipeId = repository.createRecipe("有记录没图")
+        repository.addImage(recipeId, imported("ghost"))
+        val bytes = ByteArrayOutputStream()
+            .also { repository.exportBackup(it) }
+            .toByteArray()
+
+        repository.importBackup(ByteArrayInputStream(bytes))
+
+        assertTrue(repository.images(recipeId).isEmpty())
+        assertEquals("有记录没图", repository.recipeList.first().single().recipe.title)
+    }
+
+    @Test
+    fun `不是备份文件时导入失败，且不会把原来的数据弄丢`() = runBlocking {
+        seedEverything()
+        val before = repository.recipeList.first().size
+
+        assertThrows(IllegalArgumentException::class.java) {
+            runBlocking { repository.importBackup(ByteArrayInputStream("乱七八糟".toByteArray())) }
+        }
+
+        assertEquals(before, repository.recipeList.first().size)
     }
 
     private fun imported(name: String) = ImportedImage(

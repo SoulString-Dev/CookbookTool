@@ -1,5 +1,6 @@
 package org.miu.cookbook.ui
 
+import android.widget.Toast
 import androidx.annotation.StringRes
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.height
@@ -31,6 +32,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
@@ -44,6 +46,8 @@ import androidx.navigation.navArgument
 import kotlinx.coroutines.launch
 import org.miu.cookbook.R
 import org.miu.cookbook.data.db.ContentSection
+import org.miu.cookbook.di.LocalAppContainer
+import org.miu.cookbook.ui.backup.BackupMenu
 import org.miu.cookbook.ui.history.MealHistoryScreen
 import org.miu.cookbook.ui.recipes.ImageEditScreen
 import org.miu.cookbook.ui.recipes.RecipeDetailScreen
@@ -92,6 +96,8 @@ fun CookbookRoot() {
     val navController = rememberNavController()
     val drawerState = rememberDrawerState(DrawerValue.Closed)
     val scope = rememberCoroutineScope()
+    val container = LocalAppContainer.current
+    val context = LocalContext.current
 
     val backStackEntry by navController.currentBackStackEntryAsState()
     val route = backStackEntry?.destination?.route
@@ -149,6 +155,14 @@ fun CookbookRoot() {
                                     contentDescription = stringResource(R.string.drawer_open),
                                 )
                             }
+                        },
+                        actions = {
+                            BackupMenu(
+                                repository = container.repository,
+                                onMessage = { message ->
+                                    Toast.makeText(context, message, Toast.LENGTH_LONG).show()
+                                },
+                            )
                         },
                     )
                 }

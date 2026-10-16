@@ -142,4 +142,15 @@
     <string name="meal_history_selection_count">已选 %1$d 天</string>
     <string name="meal_view_recipe">查看食谱</string>
     <string name="meal_history_view">查看饮食历史</string>
+    <!-- 备份与恢复 -->
+    <string name="backup_menu">备份与恢复</string>
+    <string name="backup_export">导出备份</string>
+    <string name="backup_import">导入备份</string>
+    <string name="backup_exported">备份已导出</string>
+    <string name="backup_imported">备份已导入</string>
+    <string name="backup_import_title">导入备份</string>
+    <string name="backup_import_message">导入会覆盖当前的全部数据（现有 %1$d 道菜、%2$d 条饮食记录），覆盖后无法撤销。</string>
+    <string name="backup_import_confirm">覆盖导入</string>
+    <string name="backup_failed">备份失败：%1$s</string>
+    <string name="backup_no_stream">打不开这个文件</string>
 </resources>

@@ -1,8 +1,15 @@
 package org.miu.cookbook.data
 
+import androidx.room.withTransaction
+import java.io.File
+import java.io.InputStream
+import java.io.OutputStream
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.withContext
+import org.miu.cookbook.data.backup.BackupArchive
+import org.miu.cookbook.data.db.AppDatabase
 import org.miu.cookbook.data.db.BlockKind
 import org.miu.cookbook.data.db.CategoryDao
 import org.miu.cookbook.data.db.CategoryEntity
@@ -21,6 +28,13 @@ import org.miu.cookbook.data.db.RecipeEntity
 import org.miu.cookbook.data.db.RecipeListRow
 import org.miu.cookbook.data.image.ImageStore
 import org.miu.cookbook.data.image.ImportedImage
+import org.miu.cookbook.domain.backup.BackupCategory
+import org.miu.cookbook.domain.backup.BackupContentBlock
+import org.miu.cookbook.domain.backup.BackupFile
+import org.miu.cookbook.domain.backup.BackupImage
+import org.miu.cookbook.domain.backup.BackupIngredient
+import org.miu.cookbook.domain.backup.BackupMealLog
+import org.miu.cookbook.domain.backup.BackupRecipe
 import org.miu.cookbook.domain.meal.MealSlot
 import org.miu.cookbook.domain.recipe.ContentLine
 import org.miu.cookbook.domain.recipe.ContentOutline
@@ -33,13 +47,16 @@ import org.miu.cookbook.domain.recipe.IngredientLine
  * 没有任何好处；测试要替身的话传个假 DAO 就够了。
  */
 class CookbookRepository(
-    private val recipeDao: RecipeDao,
-    private val categoryDao: CategoryDao,
-    private val mealLogDao: MealLogDao,
-    private val imageDao: RecipeImageDao,
+    /** 拿整个库而不是四个 DAO：导入要在一个事务里清空并写回，还得用 clearAllTables。 */
+    private val database: AppDatabase,
     /** 图片存放的根目录，一般就是 `filesDir`。 */
     private val baseDir: java.io.File,
 ) {
+
+    private val recipeDao: RecipeDao = database.recipeDao()
+    private val categoryDao: CategoryDao = database.categoryDao()
+    private val mealLogDao: MealLogDao = database.mealLogDao()
+    private val imageDao: RecipeImageDao = database.imageDao()
 
     // ---------- 读 ----------
 
@@ -258,5 +275,202 @@ class CookbookRepository(
         }
     }
 
+
+    // ---------- 备份 ----------
+
+    /** 现有多少道菜、多少条饮食记录（导入前提示要覆盖掉什么）。 */
+    suspend fun counts(): Pair<Int, Int> = io {
+        recipeDao.observeCount().first() to mealLogDao.observeCount().first()
+    }
+
+    /** 把当前全部数据写成一个备份 zip。 */
+    suspend fun exportBackup(out: OutputStream) = io {
+        BackupArchive.write(buildBackup(), baseDir, out)
+    }
+
+    /**
+     * 导入备份：**整库替换**（不做合并）。
+     *
+     * 图片先解到临时目录，等数据库那边成功写完再换目录——不然中途失败会留下
+     * 「库里有图、磁盘上没有」的烂摊子；数据库那边是一个事务，失败就整个回滚。
+     */
+    suspend fun importBackup(input: InputStream) = io {
+        val tmp = File(baseDir, RESTORE_TMP_DIR)
+        tmp.deleteRecursively()
+        tmp.mkdirs()
+        val backup = try {
+            BackupArchive.read(input, tmp)
+        } catch (e: Exception) {
+            tmp.deleteRecursively()
+            throw e
+        }
+        try {
+            database.withTransaction {
+                database.clearAllTables()
+                restore(backup, tmp)
+            }
+            replaceImageDirs(tmp)
+        } catch (e: Exception) {
+            tmp.deleteRecursively()
+            throw e
+        }
+        tmp.deleteRecursively()
+    }
+
+    private suspend fun buildBackup(): BackupFile {
+        val ingredients = recipeDao.allIngredients().groupBy { it.recipeId }
+        val blocks = recipeDao.allContentBlocks().groupBy { it.recipeId }
+        val images = recipeDao.allRecipeImages().groupBy { it.recipeId }
+        val links = recipeDao.allRecipeCategories().groupBy { it.recipeId }
+        return BackupFile.create(
+            exportedAt = System.currentTimeMillis(),
+            categories = categoryDao.allCategories().map {
+                BackupCategory(id = it.id, name = it.name, sortOrder = it.sortOrder)
+            },
+            recipes = recipeDao.allRecipes().map { recipe ->
+                BackupRecipe(
+                    id = recipe.id,
+                    title = recipe.title,
+                    createdAt = recipe.createdAt,
+                    updatedAt = recipe.updatedAt,
+                    categories = links[recipe.id].orEmpty().map { it.categoryId },
+                    ingredients = ingredients[recipe.id].orEmpty().map {
+                        BackupIngredient(it.name, it.amount, it.unit, it.sortOrder)
+                    },
+                    content = blocks[recipe.id].orEmpty().map {
+                        BackupContentBlock(
+                            section = it.section.name,
+                            kind = it.kind.name,
+                            level = it.level,
+                            text = it.text,
+                            sortOrder = it.sortOrder,
+                        )
+                    },
+                    images = images[recipe.id].orEmpty().map {
+                        BackupImage(
+                            file = it.path,
+                            thumbFile = it.thumbPath,
+                            width = it.width,
+                            height = it.height,
+                            sortOrder = it.sortOrder,
+                            isCover = it.isCover,
+                        )
+                    },
+                )
+            },
+            mealLogs = mealLogDao.allLogs().map {
+                BackupMealLog(
+                    recipeId = it.recipeId,
+                    epochDay = it.epochDay,
+                    slot = it.slot.name,
+                    createdAt = it.createdAt,
+                )
+            },
+        )
+    }
+
+    /**
+     * 按原 id 写回。被引用的东西缺了就丢掉那条引用，而不是让整个导入失败：
+     * 备份文件可能是手改过的，或者图片文件在传输中丢了。
+     */
+    private suspend fun restore(backup: BackupFile, tmp: File) {
+        val recipeIds = backup.recipes.map { it.id }.toSet()
+        val categoryIds = backup.categories.map { it.id }.toSet()
+
+        categoryDao.insertAll(
+            backup.categories.map { CategoryEntity(it.id, it.name, it.sortOrder) },
+        )
+        recipeDao.insertRecipes(
+            backup.recipes.map { RecipeEntity(it.id, it.title, it.createdAt, it.updatedAt) },
+        )
+        recipeDao.insertAllLinks(
+            backup.recipes.flatMap { recipe ->
+                recipe.categories.filter { it in categoryIds }
+                    .map { RecipeCategoryCrossRef(recipe.id, it) }
+            },
+        )
+        recipeDao.insertAllIngredients(
+            backup.recipes.flatMap { recipe ->
+                recipe.ingredients.map {
+                    IngredientEntity(
+                        recipeId = recipe.id,
+                        name = it.name,
+                        amount = it.amount,
+                        unit = it.unit,
+                        sortOrder = it.sortOrder,
+                    )
+                }
+            },
+        )
+        recipeDao.insertAllContentBlocks(
+            backup.recipes.flatMap { recipe ->
+                recipe.content.map {
+                    ContentBlockEntity(
+                        recipeId = recipe.id,
+                        section = it.section.toContentSection(),
+                        kind = it.kind.toBlockKind(),
+                        level = it.level,
+                        text = it.text,
+                        sortOrder = it.sortOrder,
+                    )
+                }
+            },
+        )
+        imageDao.insertAll(
+            backup.recipes.flatMap { recipe ->
+                recipe.images
+                    .filter { File(tmp, it.file).isFile }
+                    .map {
+                        RecipeImageEntity(
+                            recipeId = recipe.id,
+                            path = it.file,
+                            thumbPath = it.thumbFile,
+                            width = it.width,
+                            height = it.height,
+                            sortOrder = it.sortOrder,
+                            isCover = it.isCover,
+                        )
+                    }
+            },
+        )
+        mealLogDao.insertAllLogs(
+            backup.mealLogs.filter { it.recipeId in recipeIds }.mapNotNull { log ->
+                log.slot.toMealSlot()?.let {
+                    MealLogEntity(
+                        epochDay = log.epochDay,
+                        slot = it,
+                        recipeId = log.recipeId,
+                        createdAt = log.createdAt,
+                    )
+                }
+            },
+        )
+        // 封面掉了一张（文件丢了）时兜回来：每道菜重排顺序并保证有封面
+        backup.recipes.forEach { recipe ->
+            val ordered = imageDao.listFor(recipe.id)
+            if (ordered.isNotEmpty()) renumberImages(recipe.id, ordered)
+        }
+    }
+
+    private fun replaceImageDirs(tmp: File) {
+        listOf(ImageStore.IMAGE_DIR, ImageStore.THUMB_DIR).forEach { name ->
+            File(baseDir, name).deleteRecursively()
+            val from = File(tmp, name)
+            if (from.isDirectory) from.renameTo(File(baseDir, name))
+        }
+    }
+
+    private fun String.toContentSection(): ContentSection =
+        ContentSection.entries.firstOrNull { it.name == this } ?: ContentSection.DIRECTIONS
+
+    private fun String.toBlockKind(): BlockKind =
+        BlockKind.entries.firstOrNull { it.name == this } ?: BlockKind.LIST_ITEM
+
+    private fun String.toMealSlot(): MealSlot? = MealSlot.entries.firstOrNull { it.name == this }
+
     private suspend fun <T> io(block: suspend () -> T): T = withContext(Dispatchers.IO) { block() }
+
+    private companion object {
+        const val RESTORE_TMP_DIR = "restore-tmp"
+    }
 }

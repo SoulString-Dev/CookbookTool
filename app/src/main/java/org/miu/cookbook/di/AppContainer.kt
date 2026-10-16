@@ -25,7 +25,7 @@ class AppContainer(context: Context) {
     val imageDao: RecipeImageDao get() = database.imageDao()
 
     val repository: CookbookRepository by lazy {
-        CookbookRepository(recipeDao, categoryDao, mealLogDao, imageDao, filesDir)
+        CookbookRepository(database, filesDir)
     }
 
     /** 图片存在应用私有目录，库里只记相对路径。 */

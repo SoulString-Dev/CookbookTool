@@ -25,7 +25,15 @@ bash scripts/build.sh             # 默认 assembleDebug
 bash scripts/build.sh test        # JVM 单测
 ```
 
-产出的 APK：`app/build/outputs/apk/debug/app-debug.apk`
+产出的 APK：
+
+- 调试包 `app/build/outputs/apk/debug/app-debug.apk`（包名带 `.debug`，可以和正式包并存）
+- 正式包 `app/build/outputs/apk/release/app-release.apk`（`bash scripts/build.sh assembleRelease`）
+
+正式包的签名口令放在工作区的 `keystore.properties`（和 `keystore/` 一起 gitignore）。
+文件不在时会退回 debug 签名，这样别人 clone 下来也能直接 `assembleRelease` 出包装机。
+**故意没开 R8**：kotlinx-serialization 和 Room 的 keep 规则没有真机验证过，
+压缩出问题只有运行时才发现，等真机跑通一轮再开。
 
 用 Android Studio 打开也可以，但需要本机有 JDK 17+ 与 Android SDK 35，
 并让 Gradle 能写 `$HOME`（或设 `GRADLE_USER_HOME`）。
@@ -95,6 +103,29 @@ index 0 是最新的一天、落在屏幕底部，正好是"默认停在最下�
 同一天同一餐可以记多道菜；把某一餐整体改到另一餐（`moveSlot`）时，如果目标那一餐已经有记录，
 两者交换——这样不会把已有记录挤掉。
 
+## 备份与恢复：一个 zip，导入即整库替换
+
+顶栏右上角的「⋮」是导出 / 导入备份，走 SAF（`CreateDocument` / `OpenDocument`），
+不需要任何存储权限。备份文件就是：
+
+```
+cookbook.json          数据（可读的 JSON，图片按文件名引用）
+images/ab12.jpg        原图（长边 2048 那份）
+thumbs/ab12.jpg        缩略图
+```
+
+用 zip 而不是把图片 base64 塞进 JSON：图片占备份体积九成以上，base64 还要再涨三分之一，
+而且解压时得把整个 JSON 读进内存。`cookbook.json` 本身是可读的，出问题能直接打开看。
+
+导入是**整库替换**（不做合并），所以先弹窗说清会覆盖掉什么。安全性上做了三件事：
+
+- 图片先解到 `restore-tmp/`，等数据库那边成功写完才换目录，中途失败不会留「库里有图、磁盘上没有」；
+- 数据库那边包在一个事务里（`clearAllTables` + 按原 id 写回），失败整个回滚；
+- 被引用的东西缺了就丢掉那条引用（图片文件丢了、分类 id 不存在），而不是让整个导入失败——
+  备份文件可能是手改过的。zip 条目名会做目录穿越检查。
+
+主键 id 原样保留，所以食谱-分类-图片-饮食记录之间的引用关系不会错位。
+
 ## 进度
 
 - [x] **M0** 工程骨架：Gradle/Compose/Room 空库、侧边栏、两个主界面空状态、餐段规则与单测
@@ -102,4 +133,4 @@ index 0 是最新的一天、落在屏幕底部，正好是"默认停在最下�
 - [x] **M2** 详情页与文本编辑（原料拖动、做法缩进/句号三级标题、分类 tag、Markdown 序列化器）
 - [x] **M3** 图片：拍照/相册、排序、封面、黑底预览（最多六张）
 - [x] **M4** 饮食历史：记录流程、按天列表、编辑、整餐交换、批量删除
-- [ ] **M5** 导出导入备份、打磨、出正式包
+- [x] **M5** 导出导入备份（SAF zip）、正式包签名、README 收尾
