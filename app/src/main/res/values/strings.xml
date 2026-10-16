@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">菜谱本</string>
+
+    <string name="drawer_open">打开侧边栏</string>
+    <string name="drawer_close">关闭侧边栏</string>
+
+    <string name="dest_recipes">食谱</string>
+    <string name="dest_history">饮食历史</string>
+
+    <string name="recipes_empty_title">还没有食谱</string>
+    <string name="recipes_empty_hint">点右下角的加号，把第一道菜记下来</string>
+    <string name="history_empty_title">还没有饮食记录</string>
+    <string name="history_empty_hint">在食谱页点加号，记录今天吃了什么</string>
+
+    <string name="action_add_recipe">添加食谱</string>
+    <string name="action_search">搜索</string>
+    <string name="action_edit">编辑</string>
+</resources>
