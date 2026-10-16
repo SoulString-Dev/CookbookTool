@@ -15,6 +15,7 @@ import org.junit.runner.RunWith
 import org.miu.cookbook.data.db.AppDatabase
 import org.miu.cookbook.data.db.ContentSection
 import org.miu.cookbook.data.db.MealLogEntity
+import org.miu.cookbook.data.image.ImportedImage
 import org.miu.cookbook.domain.meal.MealSlot
 import org.miu.cookbook.domain.recipe.ContentLine
 import org.miu.cookbook.domain.recipe.IngredientLine
@@ -35,12 +36,20 @@ class CookbookRepositoryTest {
 
     private lateinit var db: AppDatabase
     private lateinit var repository: CookbookRepository
+    private lateinit var baseDir: java.io.File
 
     @Before
     fun setUp() {
         val context = ApplicationProvider.getApplicationContext<Context>()
         db = Room.inMemoryDatabaseBuilder(context, AppDatabase::class.java).build()
-        repository = CookbookRepository(db.recipeDao(), db.categoryDao(), db.mealLogDao())
+        baseDir = context.filesDir
+        repository = CookbookRepository(
+            db.recipeDao(),
+            db.categoryDao(),
+            db.mealLogDao(),
+            db.imageDao(),
+            baseDir,
+        )
     }
 
     @After
@@ -218,4 +227,55 @@ class CookbookRepositoryTest {
         assertEquals(directions, after.contentLines(ContentSection.DIRECTIONS))
         assertEquals(listOf(ContentLine("剩下的汤别倒")), after.contentLines(ContentSection.NOTE))
     }
+
+    @Test
+    fun `第一张图自动成为列表封面`() {
+        val recipe = runBlocking { repository.createRecipe("番茄炒蛋") }
+
+        val first = runBlocking { repository.addImage(recipe, imported("a")) }
+        val second = runBlocking { repository.addImage(recipe, imported("b")) }
+
+        val images = runBlocking { repository.images(recipe) }
+        assertEquals(listOf("images/a.jpg", "images/b.jpg"), images.map { it.path })
+        assertEquals(listOf(0, 1), images.map { it.sortOrder })
+        assertEquals(first, images.single { it.isCover }.id)
+
+        // 手动改成第二张
+        runBlocking { repository.setCover(recipe, second) }
+        val afterCover = runBlocking { repository.images(recipe) }
+        assertEquals(second, afterCover.single { it.isCover }.id)
+
+        // 删掉当前封面，封面要自动落到剩下那张上，顺序也要重排成 0..n
+        runBlocking { repository.deleteImage(afterCover.single { it.id == second }) }
+        val afterDelete = runBlocking { repository.images(recipe) }
+        assertEquals(listOf("images/a.jpg"), afterDelete.map { it.path })
+        assertEquals(listOf(0), afterDelete.map { it.sortOrder })
+        assertEquals(first, afterDelete.single().id)
+        assertEquals(true, afterDelete.single().isCover)
+    }
+
+    @Test
+    fun `拖动图片会换顺序且封面跟着图走`() {
+        val recipe = runBlocking { repository.createRecipe("番茄炒蛋") }
+        runBlocking {
+            repository.addImage(recipe, imported("a"))
+            repository.addImage(recipe, imported("b"))
+            repository.addImage(recipe, imported("c"))
+        }
+
+        runBlocking { repository.moveImage(recipe, from = 2, to = 0) }
+
+        val images = runBlocking { repository.images(recipe) }
+        assertEquals(listOf("images/c.jpg", "images/a.jpg", "images/b.jpg"), images.map { it.path })
+        assertEquals(listOf(0, 1, 2), images.map { it.sortOrder })
+        // 封面还是原来那一张（第一张 a），不会因为换了位置就跑到别处
+        assertEquals("images/a.jpg", images.single { it.isCover }.path)
+    }
+
+    private fun imported(name: String) = ImportedImage(
+        path = "images/$name.jpg",
+        thumbPath = "thumbs/$name.jpg",
+        width = 100,
+        height = 80,
+    )
 }

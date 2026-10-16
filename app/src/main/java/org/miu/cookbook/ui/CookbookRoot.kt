@@ -45,6 +45,7 @@ import kotlinx.coroutines.launch
 import org.miu.cookbook.R
 import org.miu.cookbook.data.db.ContentSection
 import org.miu.cookbook.ui.history.MealHistoryScreen
+import org.miu.cookbook.ui.recipes.ImageEditScreen
 import org.miu.cookbook.ui.recipes.RecipeDetailScreen
 import org.miu.cookbook.ui.recipes.RecipeListScreen
 import org.miu.cookbook.ui.recipes.edit.ContentEditScreen
@@ -68,6 +69,9 @@ private const val ARG_RECIPE_EDIT = "edit"
 /** 原料编辑。 */
 private const val ROUTE_INGREDIENT_EDIT = "recipe/{recipeId}/ingredients"
 
+/** 图片编辑（黑底、可删/加/换序/设封面）。 */
+private const val ROUTE_IMAGE_EDIT = "recipe/{recipeId}/images"
+
 /** 做法 / 备注的文本编辑。 */
 private const val ROUTE_CONTENT_EDIT = "recipe/{recipeId}/text/{section}"
 private const val ARG_CONTENT_SECTION = "section"
@@ -76,6 +80,8 @@ private fun recipeDetailRoute(recipeId: Long, edit: Boolean = false) =
     "recipe/$recipeId?edit=$edit"
 
 private fun ingredientEditRoute(recipeId: Long) = "recipe/$recipeId/ingredients"
+
+private fun imageEditRoute(recipeId: Long) = "recipe/$recipeId/images"
 
 private fun contentEditRoute(recipeId: Long, section: ContentSection) =
     "recipe/$recipeId/text/${section.name}"
@@ -189,6 +195,7 @@ fun CookbookRoot() {
                         onBack = { navController.popBackStack() },
                         onEditIngredients = { navController.navigate(ingredientEditRoute(recipeId)) },
                         onEditContent = { section -> navController.navigate(contentEditRoute(recipeId, section)) },
+                        onEditImages = { navController.navigate(imageEditRoute(recipeId)) },
                         startEditing = startEditing,
                     )
                 }
@@ -201,6 +208,16 @@ fun CookbookRoot() {
                         recipeId = recipeId,
                         onDone = { navController.popBackStack() },
                         onCancel = { navController.popBackStack() },
+                    )
+                }
+                composable(
+                    route = ROUTE_IMAGE_EDIT,
+                    arguments = listOf(navArgument(ARG_RECIPE_ID) { type = NavType.LongType }),
+                ) { entry ->
+                    val recipeId = entry.arguments?.getLong(ARG_RECIPE_ID) ?: return@composable
+                    ImageEditScreen(
+                        recipeId = recipeId,
+                        onDone = { navController.popBackStack() },
                     )
                 }
                 composable(

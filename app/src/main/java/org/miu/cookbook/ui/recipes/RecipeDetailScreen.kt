@@ -17,6 +17,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -24,6 +25,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.List
+import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Icon
@@ -46,6 +48,8 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -74,6 +78,7 @@ fun RecipeDetailScreen(
     onBack: () -> Unit,
     onEditIngredients: () -> Unit,
     onEditContent: (ContentSection) -> Unit,
+    onEditImages: () -> Unit,
     modifier: Modifier = Modifier,
     /** 长按菜单选「编辑食谱」进来时直接就是编辑态。 */
     startEditing: Boolean = false,
@@ -88,6 +93,7 @@ fun RecipeDetailScreen(
     var titleDraft by remember { mutableStateOf("") }
     var showMarkdown by remember { mutableStateOf(false) }
     var categoryPickerOpen by remember { mutableStateOf(false) }
+    var viewerIndex by remember { mutableStateOf<Int?>(null) }
     val scope = rememberCoroutineScope()
 
     Column(modifier = modifier.fillMaxSize()) {
@@ -157,14 +163,70 @@ fun RecipeDetailScreen(
                 .verticalScroll(rememberScrollState())
                 .padding(horizontal = 20.dp),
         ) {
-            if (current.imagePaths.isNotEmpty()) {
+            if (editing) {
+                // 编辑态：点这一块进图片编辑（跟点正文进文本编辑是一个套路）
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(top = 8.dp)
+                        .clip(RoundedCornerShape(16.dp))
+                        .background(MaterialTheme.colorScheme.surfaceVariant)
+                        .clickable(onClick = onEditImages)
+                        .padding(12.dp),
+                ) {
+                    if (current.imagePaths.isEmpty()) {
+                        Box(
+                            modifier = Modifier
+                                .size(72.dp)
+                                .clip(RoundedCornerShape(12.dp))
+                                .background(MaterialTheme.colorScheme.surface),
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            Icon(
+                                imageVector = Icons.Filled.Add,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                    } else {
+                        current.imagePaths.take(3).forEach { path ->
+                            Box(
+                                modifier = Modifier
+                                    .padding(end = 8.dp)
+                                    .size(72.dp)
+                                    .clip(RoundedCornerShape(12.dp))
+                                    .background(MaterialTheme.colorScheme.surface),
+                            ) {
+                                AsyncImage(
+                                    model = path,
+                                    contentDescription = null,
+                                    contentScale = ContentScale.Crop,
+                                    modifier = Modifier.fillMaxSize(),
+                                )
+                            }
+                        }
+                    }
+                    Spacer(Modifier.weight(1f))
+                    Text(
+                        text = stringResource(R.string.image_edit),
+                        style = MaterialTheme.typography.labelLarge,
+                        color = MaterialTheme.colorScheme.primary,
+                    )
+                }
+                Spacer(Modifier.height(16.dp))
+            } else if (current.imagePaths.isNotEmpty()) {
                 LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    items(current.imagePaths) { path ->
+                    itemsIndexed(current.imagePaths) { index, path ->
                         Box(
                             modifier = Modifier
                                 .size(220.dp)
                                 .clip(RoundedCornerShape(16.dp))
-                                .background(MaterialTheme.colorScheme.surfaceVariant),
+                                .background(MaterialTheme.colorScheme.surfaceVariant)
+                                .clickable { viewerIndex = index }
+                                .semantics {
+                                    contentDescription = "$index"
+                                },
                         ) {
                             AsyncImage(
                                 model = path,

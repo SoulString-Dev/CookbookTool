@@ -4,6 +4,9 @@
     <!--
       刻意不声明 android.permission.INTERNET：
       “纯本地不联网”由系统层面保证，而不是靠代码约定。
+      拍照和选相册也都不需要权限：拍照交给系统相机 App（结果写进我们自己的
+      FileProvider Uri），选图交给 Photo Picker（Android 13+ 原生，以下由系统退回
+      到文件选择器）。整个应用仍然一个权限都不要。
     -->
 
     <application
@@ -14,6 +17,20 @@
         android:roundIcon="@mipmap/ic_launcher_round"
         android:supportsRtl="true"
         android:theme="@style/Theme.CookbookTool">
+
+        <!--
+          只为了把 cacheDir/camera 里的临时文件交给系统相机去写。
+          exported=false + 只授临时读写的 Uri 权限，别的应用拿不到我们的文件。
+        -->
+        <provider
+            android:name="androidx.core.content.FileProvider"
+            android:authorities="${applicationId}.fileprovider"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data
+                android:name="android.support.FILE_PROVIDER_PATHS"
+                android:resource="@xml/file_paths" />
+        </provider>
 
         <activity
             android:name=".MainActivity"

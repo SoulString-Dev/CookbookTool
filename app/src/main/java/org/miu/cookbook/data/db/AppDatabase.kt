@@ -23,6 +23,7 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun recipeDao(): RecipeDao
     abstract fun categoryDao(): CategoryDao
     abstract fun mealLogDao(): MealLogDao
+    abstract fun imageDao(): RecipeImageDao
 
     companion object {
         const val NAME = "cookbook.db"

@@ -147,3 +147,33 @@ data class RecipeLastCooked(
     @androidx.room.ColumnInfo(name = "recipe_id") val recipeId: Long,
     @androidx.room.ColumnInfo(name = "last_day") val lastDay: Long,
 )
+
+@Dao
+interface RecipeImageDao {
+
+    @Query("SELECT * FROM recipe_image WHERE recipe_id = :recipeId ORDER BY sort_order, id")
+    suspend fun listFor(recipeId: Long): List<RecipeImageEntity>
+
+    @Query("SELECT COUNT(*) FROM recipe_image WHERE recipe_id = :recipeId")
+    suspend fun countFor(recipeId: Long): Int
+
+    @Insert
+    suspend fun insert(image: RecipeImageEntity): Long
+
+    @Query("DELETE FROM recipe_image WHERE id = :imageId")
+    suspend fun deleteById(imageId: Long)
+
+    @Query("UPDATE recipe_image SET sort_order = :sortOrder WHERE id = :imageId")
+    suspend fun updateSortOrder(imageId: Long, sortOrder: Int)
+
+    @Query("UPDATE recipe_image SET is_cover = 0 WHERE recipe_id = :recipeId")
+    suspend fun clearCover(recipeId: Long)
+
+    @Query("UPDATE recipe_image SET is_cover = 1 WHERE id = :imageId")
+    suspend fun markCover(imageId: Long)
+
+    @Query(
+        "UPDATE recipe_image SET thumb_path = :thumbPath WHERE recipe_id = :recipeId AND path = :path",
+    )
+    suspend fun updateThumbPath(recipeId: Long, path: String, thumbPath: String)
+}

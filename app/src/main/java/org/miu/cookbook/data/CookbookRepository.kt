@@ -12,9 +12,13 @@ import org.miu.cookbook.data.db.IngredientEntity
 import org.miu.cookbook.data.db.MealLogDao
 import org.miu.cookbook.data.db.RecipeCategoryCrossRef
 import org.miu.cookbook.data.db.RecipeDao
+import org.miu.cookbook.data.db.RecipeImageDao
+import org.miu.cookbook.data.db.RecipeImageEntity
 import org.miu.cookbook.data.db.RecipeDetail
 import org.miu.cookbook.data.db.RecipeEntity
 import org.miu.cookbook.data.db.RecipeListRow
+import org.miu.cookbook.data.image.ImageStore
+import org.miu.cookbook.data.image.ImportedImage
 import org.miu.cookbook.domain.recipe.ContentLine
 import org.miu.cookbook.domain.recipe.ContentOutline
 import org.miu.cookbook.domain.recipe.IngredientLine
@@ -29,6 +33,9 @@ class CookbookRepository(
     private val recipeDao: RecipeDao,
     private val categoryDao: CategoryDao,
     private val mealLogDao: MealLogDao,
+    private val imageDao: RecipeImageDao,
+    /** 图片存放的根目录，一般就是 `filesDir`。 */
+    private val baseDir: java.io.File,
 ) {
 
     // ---------- 读 ----------
@@ -147,6 +154,69 @@ class CookbookRepository(
             CategoryEntity(name = trimmed, sortOrder = categoryDao.maxSortOrder() + 1),
         )
         if (inserted > 0) inserted else requireNotNull(categoryDao.findByName(trimmed)).id
+    }
+
+    // ---------- 图片 ----------
+
+    suspend fun images(recipeId: Long): List<RecipeImageEntity> =
+        io { imageDao.listFor(recipeId) }
+
+    /**
+     * 把已经落盘的图片挂到食谱上，排到最后。
+     * 这是这道菜的第一张图时，顺手把它设成列表封面。
+     */
+    suspend fun addImage(recipeId: Long, imported: ImportedImage): Long = io {
+        val isFirst = imageDao.countFor(recipeId) == 0
+        val id = imageDao.insert(
+            RecipeImageEntity(
+                recipeId = recipeId,
+                path = imported.path,
+                thumbPath = imported.thumbPath,
+                width = imported.width,
+                height = imported.height,
+                sortOrder = imageDao.countFor(recipeId),
+                isCover = isFirst,
+            ),
+        )
+        recipeDao.touch(recipeId, System.currentTimeMillis())
+        id
+    }
+
+    /** 删图：先删库里的行，再删磁盘上的两个文件。 */
+    suspend fun deleteImage(image: RecipeImageEntity) = io {
+        imageDao.deleteById(image.id)
+        ImageStore.deleteFiles(baseDir, image.path, image.thumbPath)
+        renumberImages(image.recipeId, imageDao.listFor(image.recipeId))
+        recipeDao.touch(image.recipeId, System.currentTimeMillis())
+    }
+
+    /** 换顺序：把 [from] 位置的图挪到 [to]。 */
+    suspend fun moveImage(recipeId: Long, from: Int, to: Int) = io {
+        val ordered = imageDao.listFor(recipeId).toMutableList()
+        if (from !in ordered.indices || to !in ordered.indices || from == to) return@io
+        ordered.add(to, ordered.removeAt(from))
+        renumberImages(recipeId, ordered)
+        recipeDao.touch(recipeId, System.currentTimeMillis())
+    }
+
+    /** 设为列表封面（一张图独占）。 */
+    suspend fun setCover(recipeId: Long, imageId: Long) = io {
+        imageDao.clearCover(recipeId)
+        imageDao.markCover(imageId)
+        recipeDao.touch(recipeId, System.currentTimeMillis())
+    }
+
+    /** 顺序重排成 0..n，顺便保证总有且只有一张封面。 */
+    private suspend fun renumberImages(recipeId: Long, ordered: List<RecipeImageEntity>) {
+        ordered.forEachIndexed { index, image ->
+            if (image.sortOrder != index) imageDao.updateSortOrder(image.id, index)
+        }
+        if (ordered.isEmpty()) return
+        if (ordered.none { it.isCover }) {
+            val first = ordered.first()
+            imageDao.clearCover(recipeId)
+            imageDao.markCover(first.id)
+        }
     }
 
     private suspend fun <T> io(block: suspend () -> T): T = withContext(Dispatchers.IO) { block() }

@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  拍照的临时文件放在 cacheDir/camera/ 下，拍完立刻解码并压缩进 filesDir/images/，
+  临时文件就删掉。这里只暴露这一个目录。
+-->
+<paths>
+    <cache-path name="camera" path="camera/" />
+</paths>

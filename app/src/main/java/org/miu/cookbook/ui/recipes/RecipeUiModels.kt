@@ -47,7 +47,8 @@ data class RecipeDetailUi(
     val imagePaths: List<String>,
 )
 
-private const val MAX_IMAGES = 6
+/** 一道菜最多留六张图（需求定的）。 */
+const val MAX_IMAGES = 6
 
 fun RecipeListRow.toListItem(baseDir: File): RecipeListItem {
     val ingredientLines = ingredients.sortedBy { it.sortOrder }.map { it.toLine() }

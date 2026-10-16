@@ -7,6 +7,7 @@ import org.miu.cookbook.data.db.AppDatabase
 import org.miu.cookbook.data.db.CategoryDao
 import org.miu.cookbook.data.db.MealLogDao
 import org.miu.cookbook.data.db.RecipeDao
+import org.miu.cookbook.data.db.RecipeImageDao
 
 /**
  * 手写依赖容器，不引 Hilt：
@@ -21,9 +22,10 @@ class AppContainer(context: Context) {
     val recipeDao: RecipeDao get() = database.recipeDao()
     val categoryDao: CategoryDao get() = database.categoryDao()
     val mealLogDao: MealLogDao get() = database.mealLogDao()
+    val imageDao: RecipeImageDao get() = database.imageDao()
 
     val repository: CookbookRepository by lazy {
-        CookbookRepository(recipeDao, categoryDao, mealLogDao)
+        CookbookRepository(recipeDao, categoryDao, mealLogDao, imageDao, filesDir)
     }
 
     /** 图片存在应用私有目录，库里只记相对路径。 */
