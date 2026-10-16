@@ -5,6 +5,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
@@ -153,6 +154,8 @@ fun ContentEditScreen(
         Column(
             modifier = Modifier
                 .fillMaxSize()
+                // 输入法一弹出来就让出下半屏，正在编的那几行不会被键帽压住
+                .imePadding()
                 .verticalScroll(rememberScrollState())
                 .padding(horizontal = 12.dp, vertical = 4.dp),
         ) {
@@ -196,8 +199,23 @@ fun ContentEditScreen(
                             null
                         }
                         val updated = when (typed) {
-                            ' ' -> current.copy(level = (current.level + 1).coerceAtMost(ContentOutline.MAX_LEVEL))
-                            '.', '。' -> current.copy(isHeading = !current.isHeading, level = 0)
+                            // 行首空格 = 往下一层；句号 = 这一行变三级标题（顺手清掉行首空格）
+                            ' ' -> current.copy(
+                                level = (current.level + 1).coerceAtMost(ContentOutline.MAX_LEVEL),
+                            )
+
+                            '.', '。' -> current.let { line ->
+                                val toggled = ContentOutline.toggleHeading(line.asLine())
+                                line.copy(
+                                    value = line.value.copy(
+                                        text = toggled.text,
+                                        selection = TextRange(toggled.text.length),
+                                    ),
+                                    level = toggled.level,
+                                    isHeading = toggled.isHeading,
+                                )
+                            }
+
                             else -> current.copy(value = new)
                         }
                         drafts[index] = updated

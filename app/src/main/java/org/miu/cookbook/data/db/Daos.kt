@@ -230,7 +230,6 @@ abstract class MealLogDao {
     /**
      * 把某天的一餐整体挪到**任意一天的任意一餐**（记错日期是最常见的手滑）。
      *
-     * 目标那边已经有记录时不覆盖、也不交换，而是并进去：一顿饭本来就可以有好几道菜。
      * 一条 UPDATE 就够了，不需要先查再写。
      */
     @Query("UPDATE meal_log SET epoch_day = :toDay, slot = :toSlot WHERE epoch_day = :fromDay AND slot = :fromSlot")
@@ -240,6 +239,30 @@ abstract class MealLogDao {
         toDay: Long,
         toSlot: MealSlot,
     ): Int
+
+    /**
+     * 改到另一餐：**目标那边有记录就整体交换**，没有就直接挪过去。返回是否发生了交换。
+     *
+     * 交换不能两条 UPDATE 连着写：第一条把源那餐挪过去之后，两条记录就混在同一餐里，
+     * 第二条会把它们一起挪回来。所以先借一个现实中不可能出现的日子当中转站。
+     */
+    @Transaction
+    open suspend fun moveOrSwapSlots(
+        fromDay: Long,
+        fromSlot: MealSlot,
+        toDay: Long,
+        toSlot: MealSlot,
+    ): Boolean {
+        if (fromDay == toDay && fromSlot == toSlot) return false
+        if (forSlot(toDay, toSlot).isEmpty()) {
+            moveSlotTo(fromDay, fromSlot, toDay, toSlot)
+            return false
+        }
+        moveSlotTo(toDay, toSlot, SWAP_TEMP_DAY, toSlot)
+        moveSlotTo(fromDay, fromSlot, toDay, toSlot)
+        moveSlotTo(SWAP_TEMP_DAY, toSlot, fromDay, fromSlot)
+        return true
+    }
 
     /** 未来做“按上次吃的时间加权随机”要用：每道菜最后一次被吃的日子。 */
     @Query("SELECT recipe_id, MAX(epoch_day) AS last_day FROM meal_log GROUP BY recipe_id")
@@ -289,3 +312,6 @@ interface RecipeImageDao {
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertAll(items: List<RecipeImageEntity>)
 }
+
+/** 交换两餐时的中转日子：真实日期是 1970 起的天数，永远不可能是 Long.MIN_VALUE。 */
+private const val SWAP_TEMP_DAY = Long.MIN_VALUE

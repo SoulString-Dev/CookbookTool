@@ -1,6 +1,7 @@
 package org.miu.cookbook.domain.recipe
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /** 做法/备注编辑器的规则：空格缩进、退格回上级、句号变三级标题、编号怎么算。 */
@@ -98,5 +99,14 @@ class ContentOutlineTest {
         assertEquals("鸡蛋 2个", IngredientLine("鸡蛋", "2", "个").display)
         assertEquals("盐 适量", IngredientLine("盐", "适量").display)
         assertEquals("番茄", IngredientLine("番茄").display)
+    }
+
+    @Test
+    fun `切成三级标题时清掉行首的空格`() {
+        val indented = ContentLine(text = "  火候", level = 2)
+        val heading = ContentOutline.toggleHeading(indented)
+        assertEquals("火候", heading.text)
+        assertTrue(heading.isHeading)
+        assertEquals(0, heading.level)
     }
 }

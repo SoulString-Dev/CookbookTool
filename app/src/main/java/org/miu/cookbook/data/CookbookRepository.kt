@@ -133,17 +133,17 @@ class CookbookRepository(
     suspend fun countMealLogsForDay(day: Long): Int = io { mealLogDao.countForDay(day) }
 
     /**
-     * 把某天的一餐改到任意一天的任意一餐。
+     * 把某天的一餐改到任意一天的任意一餐（跨天也行，记错日期是最常见的手滑）。
      *
-     * 目标那边已经有记录就并进去（一顿饭可以有好几道菜），既不覆盖也不交换 ——
-     * 需求里最早写的是「当天内互换」，但记错日期才是最常发生的事，所以改成能跨天。
+     * **目标那餐已经有记录就整体交换**（日期和餐段一起换回来），返回是否发生了交换，
+     * 界面拿这个返回值提示用户一声；没有记录就直接挪过去。
      */
     suspend fun moveMealSlotTo(
         fromDay: Long,
         fromSlot: MealSlot,
         toDay: Long,
         toSlot: MealSlot,
-    ): Int = io { mealLogDao.moveSlotTo(fromDay, fromSlot, toDay, toSlot) }
+    ): Boolean = io { mealLogDao.moveOrSwapSlots(fromDay, fromSlot, toDay, toSlot) }
 
     /** 改名（详情页编辑态用）。 */
     suspend fun setTitle(id: Long, title: String) = renameRecipe(id, title)

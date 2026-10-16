@@ -309,7 +309,7 @@ class CookbookRepositoryTest {
     }
 
     @Test
-    fun `改到已经有记录的那一餐时并进去，不覆盖也不交换`() {
+    fun `改到已经有记录的那一餐时两餐整体交换`() {
         val a = runBlocking { repository.createRecipe("豆浆") }
         val b = runBlocking { repository.createRecipe("面条") }
         runBlocking {
@@ -317,11 +317,37 @@ class CookbookRepositoryTest {
             repository.logMeal(b, day(0), MealSlot.DINNER)
         }
 
-        runBlocking { repository.moveMealSlotTo(day(0), MealSlot.BREAKFAST, day(0), MealSlot.DINNER) }
+        val swapped = runBlocking {
+            repository.moveMealSlotTo(day(0), MealSlot.BREAKFAST, day(0), MealSlot.DINNER)
+        }
 
-        val rows = history()
-        assertEquals(2, rows.size)
-        assertEquals(listOf(MealSlot.DINNER, MealSlot.DINNER), rows.map { it.slot })
+        assertTrue(swapped)
+        val rows = history().associateBy { it.title }
+        // 豆浆去了晚餐，面条换到早餐 —— 谁都没丢
+        assertEquals(MealSlot.DINNER, rows.getValue("豆浆").slot)
+        assertEquals(MealSlot.BREAKFAST, rows.getValue("面条").slot)
+        assertEquals(2, history().size)
+    }
+
+    @Test
+    fun `跨天改餐时目标那天有记录也是交换`() {
+        val a = runBlocking { repository.createRecipe("豆浆") }
+        val b = runBlocking { repository.createRecipe("面条") }
+        runBlocking {
+            repository.logMeal(a, day(0), MealSlot.LUNCH)
+            repository.logMeal(b, day(5), MealSlot.DINNER)
+        }
+
+        val swapped = runBlocking {
+            repository.moveMealSlotTo(day(0), MealSlot.LUNCH, day(5), MealSlot.DINNER)
+        }
+
+        assertTrue(swapped)
+        val rows = history().associateBy { it.title }
+        assertEquals(day(5), rows.getValue("豆浆").epochDay)
+        assertEquals(MealSlot.DINNER, rows.getValue("豆浆").slot)
+        assertEquals(day(0), rows.getValue("面条").epochDay)
+        assertEquals(MealSlot.LUNCH, rows.getValue("面条").slot)
     }
 
     @Test
@@ -329,9 +355,32 @@ class CookbookRepositoryTest {
         val a = runBlocking { repository.createRecipe("豆浆") }
         runBlocking { repository.logMeal(a, day(0), MealSlot.BREAKFAST) }
 
-        runBlocking { repository.moveMealSlotTo(day(0), MealSlot.BREAKFAST, day(0), MealSlot.LUNCH) }
+        val swapped = runBlocking {
+            repository.moveMealSlotTo(day(0), MealSlot.BREAKFAST, day(0), MealSlot.LUNCH)
+        }
 
+        assertFalse(swapped)
         assertEquals(MealSlot.LUNCH, history().single().slot)
+    }
+
+    @Test
+    fun `同一餐里有多道菜时整餐一起交换`() {
+        val a = runBlocking { repository.createRecipe("豆浆") }
+        val b = runBlocking { repository.createRecipe("油条") }
+        val c = runBlocking { repository.createRecipe("面条") }
+        runBlocking {
+            repository.logMeal(a, day(0), MealSlot.BREAKFAST)
+            repository.logMeal(b, day(0), MealSlot.BREAKFAST)
+            repository.logMeal(c, day(0), MealSlot.DINNER)
+        }
+
+        runBlocking { repository.moveMealSlotTo(day(0), MealSlot.BREAKFAST, day(0), MealSlot.DINNER) }
+
+        val rows = history().associate { it.title to it.slot }
+        assertEquals(MealSlot.DINNER, rows.getValue("豆浆"))
+        assertEquals(MealSlot.DINNER, rows.getValue("油条"))
+        assertEquals(MealSlot.BREAKFAST, rows.getValue("面条"))
+        assertEquals(3, history().size)
     }
 
     @Test

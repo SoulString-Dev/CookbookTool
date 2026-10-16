@@ -23,6 +23,8 @@ import androidx.compose.material.icons.automirrored.filled.KeyboardArrowLeft
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.DateRange
+import android.widget.Toast
+
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.AssistChip
 import androidx.compose.material3.DatePicker
@@ -47,6 +49,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -410,24 +413,31 @@ fun DayEditDialog(
         },
     )
 
+    val context = LocalContext.current
     moving?.let { fromSlot ->
-        // 默认落在另一餐，用户要是只想换个餐段就不用再点一次
-        val defaultSlot = if (fromSlot == MealSlot.BREAKFAST) MealSlot.LUNCH else MealSlot.BREAKFAST
         MoveMealDialog(
             fromDate = fromDate,
             fromSlot = fromSlot,
+            // 默认还是这一餐：只换个日子的话，用户什么都不用改；要换餐段再自己点
             defaultDate = fromDate,
-            defaultSlot = defaultSlot,
+            defaultSlot = fromSlot,
             onConfirm = { toDate, toSlot ->
                 moving = null
                 if (epochDayOf(toDate) != day.epochDay || toSlot != fromSlot) {
                     scope.launch {
-                        repository.moveMealSlotTo(
+                        val swapped = repository.moveMealSlotTo(
                             fromDay = day.epochDay,
                             fromSlot = fromSlot,
                             toDay = epochDayOf(toDate),
                             toSlot = toSlot,
                         )
+                        if (swapped) {
+                            Toast.makeText(
+                                context,
+                                context.getString(R.string.meal_swapped),
+                                Toast.LENGTH_SHORT,
+                            ).show()
+                        }
                     }
                 }
             },

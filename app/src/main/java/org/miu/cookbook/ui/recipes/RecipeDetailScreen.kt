@@ -1,5 +1,7 @@
 package org.miu.cookbook.ui.recipes
 
+import android.widget.Toast
+
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -49,6 +51,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
@@ -57,6 +60,8 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import coil3.compose.AsyncImage
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import org.miu.cookbook.R
 import org.miu.cookbook.data.db.ContentSection
@@ -79,14 +84,14 @@ import org.miu.cookbook.ui.history.RecipeMealHistoryDialog
 @Composable
 fun RecipeDetailScreen(
     recipeId: Long,
+    /** 编辑态、Markdown 浮窗这些跟常驻顶栏共用的状态。 */
+    state: RecipeDetailState,
     onEditIngredients: () -> Unit,
     onEditContent: (ContentSection) -> Unit,
     onEditImages: () -> Unit,
     modifier: Modifier = Modifier,
     /** 长按菜单选「编辑食谱」进来时直接就是编辑态。 */
     startEditing: Boolean = false,
-    /** 把菜名报给常驻的顶栏，让它显示当前是哪道菜。 */
-    onTitleChange: (String) -> Unit = {},
 ) {
     val container = LocalAppContainer.current
     val repository = container.repository
@@ -94,9 +99,11 @@ fun RecipeDetailScreen(
     val detail by detailFlow.collectAsStateWithLifecycle(initialValue = null)
     val ui = remember(detail) { detail?.toDetailUi(container.filesDir) }
 
-    var editing by remember { mutableStateOf(startEditing) }
+    /** 编辑态在 state 里：顶栏上的铅笔按钮要能改它。 */
+    val editing = state.editing
     var titleDraft by remember { mutableStateOf("") }
-    var showMarkdown by remember { mutableStateOf(false) }
+    var titleDirty by remember { mutableStateOf(false) }
+    var saveJob by remember { mutableStateOf<Job?>(null) }
     var categoryPickerOpen by remember { mutableStateOf(false) }
     var viewerIndex by remember { mutableStateOf<Int?>(null) }
     // 非编辑态：右下角加号直接记这道菜；菜名右边的按钮看这道菜的饮食历史
@@ -104,54 +111,47 @@ fun RecipeDetailScreen(
     var historyOpen by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
 
+    // 只有第一次进来时看入口参数（长按菜单的「编辑食谱」直接进编辑态）。
+    // 之后在「详情页 → 原料编辑器 → 返回」的来回里 state 一直活着，编辑态不会丢。
+    LaunchedEffect(state) {
+        if (!state.initialized) {
+            state.initialized = true
+            state.editing = startEditing
+        }
+    }
+
     // 返回键：编辑态先退出编辑，别一按就把这一页关掉
-    BackHandler(enabled = editing) {
-        editing = false
-        titleDraft = ui?.title.orEmpty()
+    BackHandler(enabled = editing) { state.editing = false }
+
+    // 退出编辑态时把还在防抖窗口里的菜名补上。编辑态没有「完成」按钮，菜名是自动落盘的。
+    LaunchedEffect(editing) {
+        if (!editing && titleDirty) {
+            titleDirty = false
+            saveJob?.cancel()
+            saveJob = null
+            repository.setTitle(recipeId, titleDraft)
+        }
     }
 
     Box(modifier = modifier.fillMaxSize()) {
       Column(Modifier.fillMaxSize()) {
         val current = ui
 
-        // 菜名和返回箭头都在常驻的顶栏上，这一行只放页面自己的操作
-        Row(
-            verticalAlignment = Alignment.CenterVertically,
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 20.dp),
-        ) {
-            Spacer(Modifier.weight(1f))
-
-            if (current != null) {
-                if (editing) {
-                    TextButton(onClick = {
-                        editing = false
-                        titleDraft = current.title
-                    }) {
-                        Text(stringResource(R.string.action_cancel))
-                    }
-                    TextButton(
-                        onClick = {
-                            scope.launch {
-                                repository.setTitle(recipeId, titleDraft)
-                                editing = false
-                            }
-                        },
-                    ) {
-                        Text(stringResource(R.string.action_done))
-                    }
-                } else {
-                    TextButton(onClick = { showMarkdown = true }) {
-                        Text(stringResource(R.string.recipe_view_markdown))
-                    }
-                    IconButton(onClick = { editing = true }) {
-                        Icon(
-                            imageVector = Icons.Filled.Edit,
-                            contentDescription = stringResource(R.string.recipe_edit_title),
-                        )
-                    }
-                }
+        // 顶栏要用的两样东西：这道菜还在不在、它的 Markdown 源码
+        LaunchedEffect(current) {
+            state.available = current != null
+            state.markdown = if (current == null) {
+                ""
+            } else {
+                RecipeMarkdown.serialize(
+                    MarkdownRecipe(
+                        title = current.title,
+                        categories = current.categories,
+                        ingredients = current.ingredients,
+                        directions = current.directions,
+                        notes = current.notes,
+                    ),
+                )
             }
         }
 
@@ -168,9 +168,6 @@ fun RecipeDetailScreen(
         LaunchedEffect(current.id) {
             titleDraft = current.title
         }
-
-        // 顶栏跟着菜名变（编辑态打字时也实时跟着）
-        LaunchedEffect(current.title) { onTitleChange(current.title) }
 
         Column(
             modifier = Modifier
@@ -259,7 +256,17 @@ fun RecipeDetailScreen(
             if (editing) {
                 OutlinedTextField(
                     value = titleDraft,
-                    onValueChange = { titleDraft = it },
+                    onValueChange = { typed ->
+                        titleDraft = typed
+                        titleDirty = true
+                        // 防抖：停下来 400ms 才写库，边打字边写没必要
+                        saveJob?.cancel()
+                        saveJob = scope.launch {
+                            delay(TITLE_SAVE_DELAY)
+                            repository.setTitle(recipeId, typed)
+                            titleDirty = false
+                        }
+                    },
                     singleLine = true,
                     placeholder = { Text(stringResource(R.string.recipe_title_hint)) },
                     textStyle = Mdh1Style(),
@@ -395,18 +402,20 @@ fun RecipeDetailScreen(
         )
     }
 
-    if (showMarkdown && current != null) {
+    if (state.markdownVisible && current != null) {
         MarkdownDialog(
-            markdown = RecipeMarkdown.serialize(
-                MarkdownRecipe(
-                    title = current.title,
-                    categories = current.categories,
-                    ingredients = current.ingredients,
-                    directions = current.directions,
-                    notes = current.notes,
-                ),
-            ),
-            onDismiss = { showMarkdown = false },
+            markdown = state.markdown,
+            onDismiss = { state.markdownVisible = false },
+        )
+    }
+
+    // 点详情页里的图看大图（黑底、左右翻页）
+    val viewer = viewerIndex
+    if (viewer != null && current != null && current.imagePaths.isNotEmpty()) {
+        ImageViewer(
+            paths = current.imagePaths,
+            initialIndex = viewer.coerceIn(0, current.imagePaths.lastIndex),
+            onDismiss = { viewerIndex = null },
         )
     }
 }
@@ -414,7 +423,7 @@ fun RecipeDetailScreen(
 @Composable
 private fun MarkdownDialog(markdown: String, onDismiss: () -> Unit) {
     val clipboard = LocalClipboardManager.current
-    var copied by remember { mutableStateOf(false) }
+    val context = LocalContext.current
 
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -440,16 +449,16 @@ private fun MarkdownDialog(markdown: String, onDismiss: () -> Unit) {
             TextButton(
                 onClick = {
                     clipboard.setText(AnnotatedString(markdown))
-                    copied = true
+                    Toast.makeText(
+                        context,
+                        context.getString(R.string.recipe_markdown_copied),
+                        Toast.LENGTH_SHORT,
+                    ).show()
+                    // 复制完就把浮窗收掉，不用再点一次关闭
+                    onDismiss()
                 },
             ) {
-                Text(
-                    if (copied) {
-                        stringResource(R.string.action_done)
-                    } else {
-                        stringResource(R.string.action_copy)
-                    },
-                )
+                Text(stringResource(R.string.action_copy))
             }
         },
         dismissButton = {
@@ -546,12 +555,9 @@ private fun ContentLines(lines: List<ContentLine>) {
         if (line.isHeading) {
             Text(
                 text = line.text,
-                style = if (level == 0) {
-                    MaterialTheme.typography.titleSmall
-                } else {
-                    MaterialTheme.typography.bodyLarge
-                },
-                fontWeight = FontWeight.SemiBold,
+                // 三级标题跟编辑态一样：18sp 半粗（原来一级标题用了 titleSmall，只有
+                // 14sp，比正文还小，看着就是「没加粗的小字」）
+                style = Mdh3Style(),
                 modifier = Modifier.padding(
                     start = (level * 20).dp,
                     top = 8.dp,
@@ -578,3 +584,6 @@ private fun ContentLines(lines: List<ContentLine>) {
         }
     }
 }
+
+/** 菜名自动落盘的防抖时间。 */
+private const val TITLE_SAVE_DELAY = 400L

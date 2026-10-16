@@ -64,8 +64,9 @@ object ContentOutline {
     fun outdent(line: ContentLine): ContentLine =
         if (line.isHeading) line else line.copy(level = (line.level - 1).coerceAtLeast(0))
 
+    /** 变成三级标题（或变回来）。标题顶格，所以顺手把行首的空格清掉。 */
     fun toggleHeading(line: ContentLine): ContentLine =
-        line.copy(isHeading = !line.isHeading, level = 0)
+        line.copy(text = line.text.trimStart(), isHeading = !line.isHeading, level = 0)
 
     /**
      * 每一行显示几号。标题不占编号，而且标题之后编号重新从 1 开始

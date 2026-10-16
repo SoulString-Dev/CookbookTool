@@ -85,6 +85,7 @@
     <!-- M2：文本编辑 -->
     <string name="recipe_edit_title">编辑食谱</string>
     <string name="recipe_view_markdown">Markdown</string>
+    <string name="recipe_markdown_copied">复制成功</string>
     <string name="recipe_markdown_title">Markdown 源码</string>
     <string name="recipe_markdown_hint">这是这道菜导出的 Markdown，可以用来复制到别处。</string>
     <string name="recipe_edit_categories">编辑分类</string>
@@ -149,6 +150,7 @@
     <string name="meal_edit_date">这天改到</string>
     <string name="meal_date_prev">前一天</string>
     <string name="meal_date_next">后一天</string>
+    <string name="meal_swapped">两餐已经交换</string>
     <string name="meal_move_from">现在：%1$s %2$s</string>
     <string name="meal_history_delete_title">删除饮食记录</string>
     <string name="meal_history_delete_message">确定删除选中的 %1$d 天记录吗？</string>

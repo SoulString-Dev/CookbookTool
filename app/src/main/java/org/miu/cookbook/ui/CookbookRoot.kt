@@ -9,7 +9,9 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.List
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.DateRange
+import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material3.DrawerValue
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -24,6 +26,7 @@ import androidx.compose.material3.NavigationDrawerItem
 import androidx.compose.material3.NavigationDrawerItemDefaults
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.rememberDrawerState
 import androidx.compose.runtime.Composable
@@ -53,6 +56,7 @@ import org.miu.cookbook.ui.backup.BackupMenu
 import org.miu.cookbook.ui.history.MealHistoryScreen
 import org.miu.cookbook.ui.recipes.ImageEditScreen
 import org.miu.cookbook.ui.recipes.RecipeDetailScreen
+import org.miu.cookbook.ui.recipes.RecipeDetailState
 import org.miu.cookbook.ui.recipes.RecipeListScreen
 import org.miu.cookbook.ui.recipes.edit.ContentEditScreen
 import org.miu.cookbook.ui.recipes.edit.IngredientEditScreen
@@ -117,15 +121,16 @@ fun CookbookRoot(
     // 顶栏「⋮」里的「多选」：主界面用它进入多选，替掉了原来浮动栏上的编辑图标
     var selectionRequested by remember { mutableStateOf(false) }
 
-    // 详情页把自己的菜名报上来，顶栏标题跟着变
-    var detailTitle by remember { mutableStateOf("") }
+    // 详情页的编辑态与 Markdown 浮窗：顶栏上的按钮要直接改它们，所以状态放在这里，
+    // 按 recipeId 记住（在「详情页 → 原料编辑器 → 返回」的来回里一直活着）
+    val routeRecipeId = backStackEntry?.arguments?.getLong(ARG_RECIPE_ID) ?: 0L
+    val detailState = remember(routeRecipeId) { RecipeDetailState() }
 
     // 顶栏**常驻**：进详情页时不再整条消失（那样切换时闪一下很突兀），
     // 只是把标题换成当前页面、把汉堡换成返回箭头。
     val sectionName = backStackEntry?.arguments?.getString(ARG_CONTENT_SECTION)
     val topTitle = when {
         mainDestination != null -> stringResource(mainDestination.labelRes)
-        route == ROUTE_RECIPE_DETAIL -> detailTitle.ifBlank { stringResource(R.string.dest_recipes) }
         route == ROUTE_INGREDIENT_EDIT -> stringResource(R.string.section_ingredients)
         route == ROUTE_IMAGE_EDIT -> stringResource(R.string.image_edit_title)
         route == ROUTE_CONTENT_EDIT -> when (sectionName) {
@@ -135,6 +140,11 @@ fun CookbookRoot(
 
         else -> stringResource(R.string.app_name)
     }
+
+    // 三个子编辑器自带 EditorTopBar（取消/标题/完成），顶栏不再叠一层
+    val subEditor = route == ROUTE_INGREDIENT_EDIT ||
+        route == ROUTE_IMAGE_EDIT ||
+        route == ROUTE_CONTENT_EDIT
 
     ModalNavigationDrawer(
         drawerState = drawerState,
@@ -190,38 +200,68 @@ fun CookbookRoot(
     ) {
         Scaffold(
             topBar = {
-                TopAppBar(
-                    title = { Text(topTitle) },
-                    navigationIcon = {
-                        if (mainDestination != null) {
-                            IconButton(onClick = { scope.launch { drawerState.open() } }) {
-                                Icon(
-                                    imageVector = Icons.Filled.Menu,
-                                    contentDescription = stringResource(R.string.drawer_open),
-                                )
+                if (!subEditor) {
+                    TopAppBar(
+                        title = { Text(topTitle) },
+                        navigationIcon = {
+                            if (mainDestination != null) {
+                                IconButton(onClick = { scope.launch { drawerState.open() } }) {
+                                    Icon(
+                                        imageVector = Icons.Filled.Menu,
+                                        contentDescription = stringResource(R.string.drawer_open),
+                                    )
+                                }
+                            } else {
+                                IconButton(onClick = {
+                                    // 详情页在编辑态时，返回箭头先退出编辑态（跟系统返回键一致）
+                                    if (route == ROUTE_RECIPE_DETAIL && detailState.editing) {
+                                        detailState.editing = false
+                                    } else {
+                                        navController.popBackStack()
+                                    }
+                                }) {
+                                    Icon(
+                                        imageVector = Icons.AutoMirrored.Filled.ArrowBack,
+                                        contentDescription = stringResource(R.string.action_back),
+                                    )
+                                }
                             }
-                        } else {
-                            IconButton(onClick = { navController.popBackStack() }) {
-                                Icon(
-                                    imageVector = Icons.AutoMirrored.Filled.ArrowBack,
-                                    contentDescription = stringResource(R.string.action_back),
+                        },
+                        actions = {
+                            if (mainDestination != null) {
+                                // 备份、多选都只放在两个主界面上
+                                BackupMenu(
+                                    repository = container.repository,
+                                    onMessage = { message ->
+                                        Toast.makeText(context, message, Toast.LENGTH_LONG).show()
+                                    },
+                                    onStartSelection = { selectionRequested = true },
                                 )
+                            } else if (route == ROUTE_RECIPE_DETAIL && detailState.available) {
+                                // 详情页的操作都在顶栏上：看 Markdown、进/出编辑态
+                                TextButton(onClick = { detailState.markdownVisible = true }) {
+                                    Text(stringResource(R.string.recipe_view_markdown))
+                                }
+                                IconButton(onClick = { detailState.editing = !detailState.editing }) {
+                                    Icon(
+                                        imageVector = if (detailState.editing) {
+                                            Icons.Filled.Check
+                                        } else {
+                                            Icons.Filled.Edit
+                                        },
+                                        contentDescription = stringResource(
+                                            if (detailState.editing) {
+                                                R.string.action_done
+                                            } else {
+                                                R.string.recipe_edit_title
+                                            },
+                                        ),
+                                    )
+                                }
                             }
-                        }
-                    },
-                    actions = {
-                        // 备份、多选都只放在两个主界面上，详情页顶栏保持干净
-                        if (mainDestination != null) {
-                            BackupMenu(
-                                repository = container.repository,
-                                onMessage = { message ->
-                                    Toast.makeText(context, message, Toast.LENGTH_LONG).show()
-                                },
-                                onStartSelection = { selectionRequested = true },
-                            )
-                        }
-                    },
-                )
+                        },
+                    )
+                }
             },
             floatingActionButton = {
                 if (route == MainDestination.Recipes.route) {
@@ -278,11 +318,11 @@ fun CookbookRoot(
                     val startEditing = entry.arguments?.getBoolean(ARG_RECIPE_EDIT) ?: false
                     RecipeDetailScreen(
                         recipeId = recipeId,
+                        state = detailState,
                         onEditIngredients = { navController.navigate(ingredientEditRoute(recipeId)) },
                         onEditContent = { section -> navController.navigate(contentEditRoute(recipeId, section)) },
                         onEditImages = { navController.navigate(imageEditRoute(recipeId)) },
                         startEditing = startEditing,
-                        onTitleChange = { detailTitle = it },
                     )
                 }
                 composable(

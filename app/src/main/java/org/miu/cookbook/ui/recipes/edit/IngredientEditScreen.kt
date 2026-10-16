@@ -9,6 +9,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
@@ -96,6 +97,8 @@ fun IngredientEditScreen(
         Column(
             modifier = Modifier
                 .fillMaxSize()
+                // 输入法弹出来时让出下半屏，正在编的那几行不会被键帽压住
+                .imePadding()
                 .verticalScroll(rememberScrollState())
                 .padding(horizontal = 12.dp),
         ) {

@@ -14,6 +14,8 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.pager.HorizontalPager
@@ -42,7 +44,9 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
@@ -317,6 +321,8 @@ fun ImageEditScreen(recipeId: Long, onDone: () -> Unit) {
  * 缩略图条。按住一张往左右拖，松手按位移算出落点。
  *
  * 拖动中不改数据、只改视觉位移，这样 [pointerInput] 的 key 不会变，手势不会被重组打断。
+ * 为了让人看清会落到哪，拖动时把被拖那张抬起来（放大 + 阴影），其余缩略图让开位置，
+ * 空出来的槽上盖一个半透明的提示块。
  */
 @Composable
 private fun ThumbnailStrip(
@@ -328,15 +334,51 @@ private fun ThumbnailStrip(
 ) {
     var draggingIndex by remember { mutableStateOf<Int?>(null) }
     var dragOffset by remember { mutableFloatStateOf(0f) }
-    val stridePx = with(LocalDensity.current) { (ThumbSize + ThumbGap).toPx() }
+    val density = LocalDensity.current
+    val stridePx = with(density) { (ThumbSize + ThumbGap).toPx() }
+    val liftPx = with(density) { 10.dp.toPx() }
 
-    Row(horizontalArrangement = Arrangement.spacedBy(ThumbGap)) {
-        images.forEachIndexed { index, image ->
-            val dragging = draggingIndex == index
+    // 松手会落到哪一格：拖动中实时算，用来让位和画提示
+    val from = draggingIndex
+    val target = from?.let { (it + (dragOffset / stridePx).roundToInt()).coerceIn(0, images.lastIndex) }
+
+    /** 松手后每一张占哪个槽（被拖的那张自己跟手走，不算在这里）。 */
+    fun slotOf(index: Int): Int = when {
+        from == null || target == null -> index
+        index == from -> target
+        from < target && index in (from + 1)..target -> index - 1
+        target < from && index in target until from -> index + 1
+        else -> index
+    }
+
+    val stripWidth = ThumbSize * images.size + ThumbGap * (images.size - 1).coerceAtLeast(0)
+
+    Box(Modifier.width(stripWidth).height(ThumbSize)) {
+        if (from != null && target != null && target != from) {
             Box(
                 modifier = Modifier
+                    .graphicsLayer { translationX = target * stridePx }
                     .size(ThumbSize)
-                    .zIndex(if (dragging) 1f else 0f)
+                    .clip(RoundedCornerShape(8.dp))
+                    .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.3f)),
+            )
+        }
+
+        images.forEachIndexed { index, image ->
+            val dragging = index == from
+            val x = if (dragging) index * stridePx + dragOffset else slotOf(index) * stridePx
+            Box(
+                modifier = Modifier
+                    .graphicsLayer {
+                        translationX = x
+                        translationY = if (dragging) -liftPx else 0f
+                        val scale = if (dragging) 1.15f else 1f
+                        scaleX = scale
+                        scaleY = scale
+                    }
+                    .size(ThumbSize)
+                    .zIndex(if (dragging) 2f else 1f)
+                    .shadow(if (dragging) 12.dp else 0.dp, RoundedCornerShape(8.dp))
                     .clip(RoundedCornerShape(8.dp))
                     .background(if (index == currentIndex) MaterialTheme.colorScheme.primary else Color.DarkGray)
                     .padding(2.dp)
@@ -352,10 +394,10 @@ private fun ThumbnailStrip(
                             },
                             onDragEnd = {
                                 val steps = (dragOffset / stridePx).roundToInt()
-                                val target = (index + steps).coerceIn(0, images.lastIndex)
+                                val landing = (index + steps).coerceIn(0, images.lastIndex)
                                 draggingIndex = null
                                 dragOffset = 0f
-                                if (target != index) onMove(index, target)
+                                if (landing != index) onMove(index, landing)
                             },
                             onDragCancel = {
                                 draggingIndex = null
