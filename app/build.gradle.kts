@@ -91,4 +91,8 @@ dependencies {
     testImplementation(libs.robolectric)
     testImplementation(libs.androidx.test.junit)
     testImplementation(libs.androidx.test.core)
+    // Robolectric 里也能跑 Compose UI 测试：没有真机/模拟器时这是唯一的自动化 UI 验证手段
+    testImplementation(platform(libs.androidx.compose.bom))
+    testImplementation(libs.androidx.compose.ui.test.junit4)
+    debugImplementation(libs.androidx.compose.ui.test.manifest)
 }
