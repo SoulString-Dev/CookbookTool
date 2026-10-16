@@ -50,4 +50,16 @@ class MealTimeTest {
         assertEquals(MealMoment(day, MealSlot.LUNCH), MealTime.resolve(LocalDateTime.of(day, LocalTime.of(10, 30))))
         assertEquals(MealMoment(day, MealSlot.DINNER), MealTime.resolve(LocalDateTime.of(day, LocalTime.of(15, 30))))
     }
+
+    @Test
+    fun `手动挑餐段时只有凌晨的晚饭算前一天`() {
+        val oneAm = LocalDateTime.of(day, LocalTime.of(1, 0))
+        assertEquals(day, MealTime.dateFor(MealSlot.BREAKFAST, oneAm))
+        assertEquals(day, MealTime.dateFor(MealSlot.LUNCH, oneAm))
+        assertEquals(day.minusDays(1), MealTime.dateFor(MealSlot.DINNER, oneAm))
+
+        val evening = LocalDateTime.of(day, LocalTime.of(19, 0))
+        assertEquals(day, MealTime.dateFor(MealSlot.DINNER, evening))
+        assertEquals(day, MealTime.dateFor(MealSlot.BREAKFAST, evening))
+    }
 }

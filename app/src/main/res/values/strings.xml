@@ -112,4 +112,34 @@
     <string name="image_edit">编辑图片</string>
     <string name="image_empty_hint">还没有图片</string>
     <string name="image_drag_hint">按住缩略图可以左右拖动排序。</string>
+
+    <!-- M4：饮食历史 -->
+    <string name="meal_record_title">记录饮食</string>
+    <string name="meal_record_hint">输入菜名或首字母找菜，点一下就是它。</string>
+    <string name="meal_record_search_hint">今天吃了什么？</string>
+    <string name="meal_record_date">日期</string>
+    <string name="meal_record_slot">哪一餐</string>
+    <string name="meal_record_confirm">记下这一顿</string>
+    <string name="meal_record_keep_only">只保存，不记录</string>
+    <string name="meal_record_exit">退出记录</string>
+    <string name="meal_record_add_recipe">新建食谱并记录</string>
+    <string name="meal_recorded">记下了：%1$s</string>
+    <string name="meal_history_title">饮食历史</string>
+    <string name="meal_history_of_recipe">「%1$s」的饮食历史</string>
+    <string name="meal_history_empty">这道菜还没记录过</string>
+    <string name="meal_history_empty_hint">在食谱页点右下角的加号，就能记下今天吃了什么</string>
+    <string name="meal_day_empty">这一天没有记录</string>
+    <string name="meal_day_edit">编辑这一天</string>
+    <string name="meal_day_delete">删除这一天</string>
+    <string name="meal_day_delete_title">删除这一天的记录</string>
+    <string name="meal_day_delete_message">这一天有 %1$d 条记录，删掉就找不回来了。</string>
+    <string name="meal_entry_delete">删掉这道菜</string>
+    <string name="meal_move_to">改到</string>
+    <string name="meal_move_hint">换到另一餐时，如果那餐已经有记录，两边会互换。</string>
+    <string name="meal_history_delete_title">删除饮食记录</string>
+    <string name="meal_history_delete_message">确定删除选中的 %1$d 天记录吗？</string>
+    <string name="meal_history_selection_none">点日期来选</string>
+    <string name="meal_history_selection_count">已选 %1$d 天</string>
+    <string name="meal_view_recipe">查看食谱</string>
+    <string name="meal_history_view">查看饮食历史</string>
 </resources>

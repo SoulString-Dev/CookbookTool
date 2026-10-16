@@ -10,6 +10,8 @@ import org.miu.cookbook.data.db.ContentBlockEntity
 import org.miu.cookbook.data.db.ContentSection
 import org.miu.cookbook.data.db.IngredientEntity
 import org.miu.cookbook.data.db.MealLogDao
+import org.miu.cookbook.data.db.MealLogEntity
+import org.miu.cookbook.data.db.MealLogRow
 import org.miu.cookbook.data.db.RecipeCategoryCrossRef
 import org.miu.cookbook.data.db.RecipeDao
 import org.miu.cookbook.data.db.RecipeImageDao
@@ -19,6 +21,7 @@ import org.miu.cookbook.data.db.RecipeEntity
 import org.miu.cookbook.data.db.RecipeListRow
 import org.miu.cookbook.data.image.ImageStore
 import org.miu.cookbook.data.image.ImportedImage
+import org.miu.cookbook.domain.meal.MealSlot
 import org.miu.cookbook.domain.recipe.ContentLine
 import org.miu.cookbook.domain.recipe.ContentOutline
 import org.miu.cookbook.domain.recipe.IngredientLine
@@ -79,6 +82,42 @@ class CookbookRepository(
     /** 这些食谱下共有多少条饮食记录，用于删除前的提示。 */
     suspend fun countMealLogs(recipeIds: List<Long>): Int = io {
         if (recipeIds.isEmpty()) 0 else mealLogDao.countForRecipes(recipeIds)
+    }
+
+    // ---------- 饮食历史 ----------
+
+    /** 历史页的数据：全部记录按时间正序（老日子在前），列表默认停在最下面。 */
+    val mealHistory: Flow<List<MealLogRow>> = mealLogDao.observeHistory()
+
+    /** 某道菜自己的历史，按时间倒序（详情页那个浮窗）。 */
+    fun mealHistoryOf(recipeId: Long): Flow<List<MealLogRow>> =
+        mealLogDao.observeForRecipe(recipeId)
+
+    /** 记一顿：同一天同一餐可以有多道菜（一餐多菜）。 */
+    suspend fun logMeal(recipeId: Long, epochDay: Long, slot: MealSlot): Long = io {
+        mealLogDao.insert(
+            MealLogEntity(
+                epochDay = epochDay,
+                slot = slot,
+                recipeId = recipeId,
+                createdAt = System.currentTimeMillis(),
+            ),
+        )
+    }
+
+    /** 撤销一条记录 / 从某天里删掉一道菜。 */
+    suspend fun deleteMealLogs(ids: List<Long>) = io {
+        if (ids.isNotEmpty()) mealLogDao.deleteByIds(ids)
+    }
+
+    /** 整天删掉（长按历史列表的「删除」）。 */
+    suspend fun deleteMealDay(day: Long) = io { mealLogDao.deleteForDay(day) }
+
+    suspend fun countMealLogsForDay(day: Long): Int = io { mealLogDao.countForDay(day) }
+
+    /** 改某天的餐段；目标餐已有记录时交换（`MealLogDao.moveSlot` 里说明）。 */
+    suspend fun moveMealSlot(day: Long, from: MealSlot, to: MealSlot) = io {
+        mealLogDao.moveSlot(day, from, to)
     }
 
     /** 改名（详情页编辑态用）。 */

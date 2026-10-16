@@ -47,7 +47,8 @@ class CookbookRootSmokeTest {
     fun `默认落在食谱页并显示空状态`() {
         launchApp()
         composeRule.onNodeWithText("还没有食谱").assertIsDisplayed()
-        composeRule.onNodeWithContentDescription("添加食谱").assertIsDisplayed()
+        // M4 起，非编辑态的这个加号是「记录饮食」（在记录模式里再按才是新增食谱）
+        composeRule.onNodeWithContentDescription("记录饮食").assertIsDisplayed()
     }
 
     @Test

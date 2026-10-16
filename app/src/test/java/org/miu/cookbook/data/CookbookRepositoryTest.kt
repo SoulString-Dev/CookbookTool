@@ -15,6 +15,7 @@ import org.junit.runner.RunWith
 import org.miu.cookbook.data.db.AppDatabase
 import org.miu.cookbook.data.db.ContentSection
 import org.miu.cookbook.data.db.MealLogEntity
+import org.miu.cookbook.data.db.MealLogRow
 import org.miu.cookbook.data.image.ImportedImage
 import org.miu.cookbook.domain.meal.MealSlot
 import org.miu.cookbook.domain.recipe.ContentLine
@@ -72,6 +73,11 @@ class CookbookRepositoryTest {
     private fun detailOf(recipeId: Long) = runBlocking {
         repository.recipeDetail(recipeId).first()!!
     }
+
+    private fun history(): List<MealLogRow> = runBlocking { repository.mealHistory.first() }
+
+    /** 从今天往前数第 n 天。 */
+    private fun day(n: Long): Long = java.time.LocalDate.now().toEpochDay() - n
 
     @Test
     fun `新建食谱会去掉首尾空格`() {
@@ -270,6 +276,121 @@ class CookbookRepositoryTest {
         assertEquals(listOf(0, 1, 2), images.map { it.sortOrder })
         // 封面还是原来那一张（第一张 a），不会因为换了位置就跑到别处
         assertEquals("images/a.jpg", images.single { it.isCover }.path)
+    }
+
+    @Test
+    fun `记录一顿会带上菜名和封面`() {
+        val recipe = runBlocking { repository.createRecipe("番茄炒蛋") }
+        runBlocking {
+            repository.addImage(recipe, imported("a"))
+            repository.logMeal(recipe, day(0), MealSlot.DINNER)
+        }
+
+        val row = history().single()
+        assertEquals(recipe, row.recipeId)
+        assertEquals("番茄炒蛋", row.title)
+        assertEquals("images/a.jpg", row.coverPath)
+        assertEquals(MealSlot.DINNER, row.slot)
+        assertEquals(day(0), row.epochDay)
+    }
+
+    @Test
+    fun `同一天同一餐可以记多道菜`() {
+        val a = runBlocking { repository.createRecipe("番茄炒蛋") }
+        val b = runBlocking { repository.createRecipe("土豆丝") }
+        runBlocking {
+            repository.logMeal(a, day(0), MealSlot.LUNCH)
+            repository.logMeal(b, day(0), MealSlot.LUNCH)
+        }
+
+        val rows = history()
+        assertEquals(2, rows.size)
+        assertEquals(setOf(a, b), rows.map { it.recipeId }.toSet())
+        assertEquals(listOf(MealSlot.LUNCH, MealSlot.LUNCH), rows.map { it.slot })
+    }
+
+    @Test
+    fun `改餐段时目标那餐已经有记录就互换`() {
+        val a = runBlocking { repository.createRecipe("豆浆") }
+        val b = runBlocking { repository.createRecipe("面条") }
+        runBlocking {
+            repository.logMeal(a, day(0), MealSlot.BREAKFAST)
+            repository.logMeal(b, day(0), MealSlot.DINNER)
+        }
+
+        runBlocking { repository.moveMealSlot(day(0), MealSlot.BREAKFAST, MealSlot.DINNER) }
+
+        val byRecipe = history().associate { it.recipeId to it.slot }
+        assertEquals(MealSlot.DINNER, byRecipe[a])
+        assertEquals(MealSlot.BREAKFAST, byRecipe[b])
+    }
+
+    @Test
+    fun `改餐段到空着的那一餐时只是搬过去`() {
+        val a = runBlocking { repository.createRecipe("豆浆") }
+        runBlocking { repository.logMeal(a, day(0), MealSlot.BREAKFAST) }
+
+        runBlocking { repository.moveMealSlot(day(0), MealSlot.BREAKFAST, MealSlot.LUNCH) }
+
+        assertEquals(MealSlot.LUNCH, history().single().slot)
+    }
+
+    @Test
+    fun `删掉某一天不影响别的天`() {
+        val a = runBlocking { repository.createRecipe("番茄炒蛋") }
+        runBlocking {
+            repository.logMeal(a, day(0), MealSlot.DINNER)
+            repository.logMeal(a, day(1), MealSlot.LUNCH)
+        }
+
+        runBlocking { repository.deleteMealDay(day(0)) }
+
+        val rows = history()
+        assertEquals(listOf(day(1)), rows.map { it.epochDay })
+        assertEquals(1, runBlocking { repository.countMealLogsForDay(day(1)) })
+        assertEquals(0, runBlocking { repository.countMealLogsForDay(day(0)) })
+    }
+
+    @Test
+    fun `可以按条删记录`() {
+        val a = runBlocking { repository.createRecipe("番茄炒蛋") }
+        runBlocking {
+            repository.logMeal(a, day(0), MealSlot.DINNER)
+            repository.logMeal(a, day(1), MealSlot.DINNER)
+        }
+
+        runBlocking { repository.deleteMealLogs(listOf(history().first().logId)) }
+
+        assertEquals(listOf(day(0)), history().map { it.epochDay })
+    }
+
+    @Test
+    fun `某道菜自己的历史按时间倒序`() {
+        val a = runBlocking { repository.createRecipe("番茄炒蛋") }
+        val b = runBlocking { repository.createRecipe("土豆丝") }
+        runBlocking {
+            repository.logMeal(a, day(3), MealSlot.DINNER)
+            repository.logMeal(a, day(0), MealSlot.LUNCH)
+            repository.logMeal(b, day(1), MealSlot.LUNCH)
+        }
+
+        val rows = runBlocking { repository.mealHistoryOf(a).first() }
+        assertEquals(listOf(day(0), day(3)), rows.map { it.epochDay })
+        assertEquals(listOf(a, a), rows.map { it.recipeId })
+    }
+
+    @Test
+    fun `删掉食谱会连带删掉它的记录`() {
+        val a = runBlocking { repository.createRecipe("番茄炒蛋") }
+        val b = runBlocking { repository.createRecipe("土豆丝") }
+        runBlocking {
+            repository.logMeal(a, day(0), MealSlot.DINNER)
+            repository.logMeal(b, day(0), MealSlot.LUNCH)
+        }
+
+        runBlocking { repository.deleteRecipes(listOf(a)) }
+
+        assertEquals(listOf(b), history().map { it.recipeId })
     }
 
     private fun imported(name: String) = ImportedImage(

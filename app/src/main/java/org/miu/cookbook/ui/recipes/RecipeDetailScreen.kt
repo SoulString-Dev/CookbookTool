@@ -26,8 +26,10 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.List
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.DateRange
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -63,6 +65,8 @@ import org.miu.cookbook.domain.markdown.MarkdownRecipe
 import org.miu.cookbook.domain.markdown.RecipeMarkdown
 import org.miu.cookbook.domain.recipe.ContentLine
 import org.miu.cookbook.ui.components.EmptyState
+import org.miu.cookbook.ui.history.RecordMealDialog
+import org.miu.cookbook.ui.history.RecipeMealHistoryDialog
 
 /**
  * 食谱详情：不编辑时是纯预览，点右上角铅笔进编辑态。
@@ -94,9 +98,13 @@ fun RecipeDetailScreen(
     var showMarkdown by remember { mutableStateOf(false) }
     var categoryPickerOpen by remember { mutableStateOf(false) }
     var viewerIndex by remember { mutableStateOf<Int?>(null) }
+    // 非编辑态：右下角加号直接记这道菜；菜名右边的按钮看这道菜的饮食历史
+    var recordOpen by remember { mutableStateOf(false) }
+    var historyOpen by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
 
-    Column(modifier = modifier.fillMaxSize()) {
+    Box(modifier = modifier.fillMaxSize()) {
+      Column(Modifier.fillMaxSize()) {
         val current = ui
 
         Row(
@@ -259,11 +267,23 @@ fun RecipeDetailScreen(
                     )
                 }
             } else {
-                Text(
-                    text = current.title,
-                    style = MaterialTheme.typography.headlineMedium,
-                    fontWeight = FontWeight.SemiBold,
-                )
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        text = current.title,
+                        style = MaterialTheme.typography.headlineMedium,
+                        fontWeight = FontWeight.SemiBold,
+                        modifier = Modifier.weight(1f, fill = false),
+                    )
+                    TextButton(onClick = { historyOpen = true }) {
+                        Icon(
+                            imageVector = Icons.Filled.DateRange,
+                            contentDescription = null,
+                            modifier = Modifier.size(18.dp),
+                        )
+                        Spacer(Modifier.width(4.dp))
+                        Text(stringResource(R.string.meal_history_view))
+                    }
+                }
             }
 
             if (editing) {
@@ -338,9 +358,43 @@ fun RecipeDetailScreen(
 
             Spacer(Modifier.height(48.dp))
         }
+      }
+
+      // 非编辑态才有加号：点一下直接记这道菜（编辑态隐藏，跟需求一致）
+      if (!editing && ui != null) {
+        FloatingActionButton(
+            onClick = { recordOpen = true },
+            modifier = Modifier.align(Alignment.BottomEnd).padding(20.dp),
+        ) {
+            Icon(
+                imageVector = Icons.Filled.Add,
+                contentDescription = stringResource(R.string.meal_record_title),
+            )
+        }
+      }
     }
 
     val current = ui
+    if (recordOpen && current != null) {
+        RecordMealDialog(
+            recipeTitle = current.title,
+            onDismiss = { recordOpen = false },
+            onConfirm = { epochDay, slot ->
+                recordOpen = false
+                scope.launch { repository.logMeal(recipeId, epochDay, slot) }
+            },
+        )
+    }
+
+    if (historyOpen && current != null) {
+        RecipeMealHistoryDialog(
+            recipeId = recipeId,
+            recipeTitle = current.title,
+            repository = repository,
+            onDismiss = { historyOpen = false },
+        )
+    }
+
     if (categoryPickerOpen) {
         CategoryPickerDialog(
             recipeIds = listOf(recipeId),

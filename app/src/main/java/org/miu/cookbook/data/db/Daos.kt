@@ -7,6 +7,7 @@ import androidx.room.Query
 import androidx.room.Transaction
 import androidx.room.Update
 import kotlinx.coroutines.flow.Flow
+import org.miu.cookbook.domain.meal.MealSlot
 
 @Dao
 abstract class RecipeDao {
@@ -117,30 +118,93 @@ interface CategoryDao {
 }
 
 @Dao
-interface MealLogDao {
+abstract class MealLogDao {
 
-    @Query("SELECT * FROM meal_log ORDER BY epoch_day DESC, slot DESC, created_at DESC")
-    fun observeAll(): Flow<List<MealLogEntity>>
+    @Query("SELECT * FROM meal_log ORDER BY epoch_day DESC, created_at DESC")
+    abstract fun observeAll(): Flow<List<MealLogEntity>>
+
+    /**
+     * 历史页用：一条记录带上菜名和封面路径。
+     *
+     * 用 JOIN + 子查询一次拿齐，而不是 @Relation（那会是 N+1 次查询）。
+     * 注意 **不要** 在 SQL 里按 slot 排序：枚举存的是名字（TEXT），
+     * 按字母排出来是 BREAKFAST/DINNER/LUNCH，早中晚的顺序是错的，交给 Kotlin 按 ordinal 排。
+     */
+    @Query(
+        """
+        SELECT m.id AS logId, m.recipe_id AS recipeId, m.epoch_day AS epochDay, m.slot AS slot,
+               m.created_at AS createdAt, r.title AS title,
+               (SELECT i.path FROM recipe_image i WHERE i.recipe_id = m.recipe_id
+                 ORDER BY i.is_cover DESC, i.sort_order, i.id LIMIT 1) AS coverPath
+        FROM meal_log m
+        JOIN recipe r ON r.id = m.recipe_id
+        ORDER BY m.epoch_day ASC, m.created_at ASC, m.id ASC
+        """,
+    )
+    abstract fun observeHistory(): Flow<List<MealLogRow>>
+
+    /** 某道菜自己的饮食历史（详情页那个浮窗），按时间倒序。 */
+    @Query(
+        """
+        SELECT m.id AS logId, m.recipe_id AS recipeId, m.epoch_day AS epochDay, m.slot AS slot,
+               m.created_at AS createdAt, r.title AS title,
+               (SELECT i.path FROM recipe_image i WHERE i.recipe_id = m.recipe_id
+                 ORDER BY i.is_cover DESC, i.sort_order, i.id LIMIT 1) AS coverPath
+        FROM meal_log m
+        JOIN recipe r ON r.id = m.recipe_id
+        WHERE m.recipe_id = :recipeId
+        ORDER BY m.epoch_day DESC, m.created_at DESC, m.id DESC
+        """,
+    )
+    abstract fun observeForRecipe(recipeId: Long): Flow<List<MealLogRow>>
 
     @Query("SELECT COUNT(*) FROM meal_log")
-    fun observeCount(): Flow<Int>
+    abstract fun observeCount(): Flow<Int>
 
     @Insert
-    suspend fun insert(log: MealLogEntity): Long
+    abstract suspend fun insert(log: MealLogEntity): Long
 
     @Query("DELETE FROM meal_log WHERE id = :id")
-    suspend fun delete(id: Long)
+    abstract suspend fun delete(id: Long)
+
+    @Query("DELETE FROM meal_log WHERE id IN (:ids)")
+    abstract suspend fun deleteByIds(ids: List<Long>)
+
+    @Query("DELETE FROM meal_log WHERE epoch_day = :day")
+    abstract suspend fun deleteForDay(day: Long)
+
+    @Query("SELECT COUNT(*) FROM meal_log WHERE epoch_day = :day")
+    abstract suspend fun countForDay(day: Long): Int
+
+    @Query("SELECT * FROM meal_log WHERE epoch_day = :day AND slot = :slot ORDER BY created_at, id")
+    abstract suspend fun forSlot(day: Long, slot: MealSlot): List<MealLogEntity>
+
+    @Query("UPDATE meal_log SET slot = :slot WHERE id = :id")
+    abstract suspend fun updateSlot(id: Long, slot: MealSlot)
 
     @Query("SELECT COUNT(*) FROM meal_log WHERE recipe_id = :recipeId")
-    suspend fun countForRecipe(recipeId: Long): Int
+    abstract suspend fun countForRecipe(recipeId: Long): Int
 
     /** 删除食谱前提示「会一并删掉 N 条饮食记录」用。 */
     @Query("SELECT COUNT(*) FROM meal_log WHERE recipe_id IN (:recipeIds)")
-    suspend fun countForRecipes(recipeIds: List<Long>): Int
+    abstract suspend fun countForRecipes(recipeIds: List<Long>): Int
+
+    /**
+     * 把某天的一餐整体挪到另一餐；目标那餐已经有记录时**交换**（需求里就是这么定的），
+     * 这样不会出现两餐内容叠在一起、也不会丢记录。
+     */
+    @Transaction
+    open suspend fun moveSlot(day: Long, from: MealSlot, to: MealSlot) {
+        if (from == to) return
+        val sources = forSlot(day, from)
+        val targets = forSlot(day, to)
+        targets.forEach { updateSlot(it.id, from) }
+        sources.forEach { updateSlot(it.id, to) }
+    }
 
     /** 未来做“按上次吃的时间加权随机”要用：每道菜最后一次被吃的日子。 */
     @Query("SELECT recipe_id, MAX(epoch_day) AS last_day FROM meal_log GROUP BY recipe_id")
-    suspend fun lastCookedDays(): List<RecipeLastCooked>
+    abstract suspend fun lastCookedDays(): List<RecipeLastCooked>
 }
 
 data class RecipeLastCooked(

@@ -97,8 +97,10 @@ fun CookbookRoot() {
     val route = backStackEntry?.destination?.route
     val mainDestination = MainDestination.entries.firstOrNull { it.route == route }
 
-    // 右下角加号：点一下让食谱页弹「新建食谱」
+    // 右下角加号：非编辑态点它是「记录饮食」，已经在记录模式里再点一次才是「新增食谱」
     var newRecipeRequested by remember { mutableStateOf(false) }
+    var recordRequested by remember { mutableStateOf(false) }
+    var recordingActive by remember { mutableStateOf(false) }
 
     ModalNavigationDrawer(
         drawerState = drawerState,
@@ -153,10 +155,15 @@ fun CookbookRoot() {
             },
             floatingActionButton = {
                 if (route == MainDestination.Recipes.route) {
-                    FloatingActionButton(onClick = { newRecipeRequested = true }) {
+                    FloatingActionButton(onClick = {
+                        if (recordingActive) newRecipeRequested = true else recordRequested = true
+                    }) {
                         Icon(
                             imageVector = Icons.Filled.Add,
-                            contentDescription = stringResource(R.string.action_add_recipe),
+                            contentDescription = stringResource(
+                                if (recordingActive) R.string.action_add_recipe
+                                else R.string.meal_record_title,
+                            ),
                         )
                     }
                 }
@@ -173,10 +180,15 @@ fun CookbookRoot() {
                         onEditRecipe = { navController.navigate(recipeDetailRoute(it, edit = true)) },
                         newRecipeRequested = newRecipeRequested,
                         onNewRecipeHandled = { newRecipeRequested = false },
+                        recordRequested = recordRequested,
+                        onRecordRequestedHandled = { recordRequested = false },
+                        onRecordingChanged = { recordingActive = it },
                     )
                 }
                 composable(MainDestination.History.route) {
-                    MealHistoryScreen()
+                    MealHistoryScreen(
+                        onOpenRecipe = { navController.navigate(recipeDetailRoute(it)) },
+                    )
                 }
                 composable(
                     route = ROUTE_RECIPE_DETAIL,

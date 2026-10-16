@@ -5,14 +5,14 @@ import java.time.LocalDateTime
 import java.time.LocalTime
 
 /** 一餐。暂时只考虑早/午/晚，不做甜点或加餐。 */
-enum class MealSlot {
-    BREAKFAST,
-    LUNCH,
-    DINNER,
+enum class MealSlot(val label: String, val shortLabel: String) {
+    BREAKFAST("早餐", "早"),
+    LUNCH("午餐", "午"),
+    DINNER("晚餐", "晚"),
     ;
 
     companion object {
-        /** 已存储的序号（1/2/3）；Room 存的是 ordinal，这里只用于展示层排序与调试。 */
+        /** 由序号取餐段，越界时夹到合法范围。 */
         fun ofOrdinal(value: Int): MealSlot = entries[value.coerceIn(entries.indices)]
     }
 }
@@ -44,6 +44,14 @@ object MealTime {
             else -> MealSlot.DINNER
         }
     }
+
+    /** 用户手动挑了某一餐时，它该记在哪一天：只有「凌晨的晚饭」会算到前一天。 */
+    fun dateFor(slot: MealSlot, now: LocalDateTime): LocalDate =
+        if (slot == MealSlot.DINNER && now.toLocalTime().toSecondOfDay() < BREAKFAST_START) {
+            now.toLocalDate().minusDays(1)
+        } else {
+            now.toLocalDate()
+        }
 
     /** 时刻 → (归属日期, 餐段)。 */
     fun resolve(dateTime: LocalDateTime): MealMoment {
