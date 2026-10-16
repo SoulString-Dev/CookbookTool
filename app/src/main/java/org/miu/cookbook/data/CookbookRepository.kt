@@ -3,14 +3,21 @@ package org.miu.cookbook.data
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.withContext
+import org.miu.cookbook.data.db.BlockKind
 import org.miu.cookbook.data.db.CategoryDao
 import org.miu.cookbook.data.db.CategoryEntity
+import org.miu.cookbook.data.db.ContentBlockEntity
+import org.miu.cookbook.data.db.ContentSection
+import org.miu.cookbook.data.db.IngredientEntity
 import org.miu.cookbook.data.db.MealLogDao
 import org.miu.cookbook.data.db.RecipeCategoryCrossRef
 import org.miu.cookbook.data.db.RecipeDao
 import org.miu.cookbook.data.db.RecipeDetail
 import org.miu.cookbook.data.db.RecipeEntity
 import org.miu.cookbook.data.db.RecipeListRow
+import org.miu.cookbook.domain.recipe.ContentLine
+import org.miu.cookbook.domain.recipe.ContentOutline
+import org.miu.cookbook.domain.recipe.IngredientLine
 
 /**
  * 界面唯一的数据入口。读直接透传 Room 的 Flow，写统一走 IO 线程。
@@ -65,6 +72,49 @@ class CookbookRepository(
     /** 这些食谱下共有多少条饮食记录，用于删除前的提示。 */
     suspend fun countMealLogs(recipeIds: List<Long>): Int = io {
         if (recipeIds.isEmpty()) 0 else mealLogDao.countForRecipes(recipeIds)
+    }
+
+    /** 改名（详情页编辑态用）。 */
+    suspend fun setTitle(id: Long, title: String) = renameRecipe(id, title)
+
+    /**
+     * 原料整体替换。编辑界面是「改完一整份再存」，所以这里不做增量 diff：
+     * 行数就几十，整份换掉最不容易写出错，还顺手把 sort_order 重排成 0..n。
+     */
+    suspend fun setIngredients(recipeId: Long, lines: List<IngredientLine>) = io {
+        val items = lines.mapIndexedNotNull { index, line ->
+            if (line.isBlank) {
+                null
+            } else {
+                IngredientEntity(
+                    recipeId = recipeId,
+                    name = line.name.trim(),
+                    amount = line.amount.trim(),
+                    unit = line.unit.trim(),
+                    sortOrder = index,
+                )
+            }
+        }
+        recipeDao.replaceIngredients(recipeId, items)
+    }
+
+    /** 做法 / 备注整体替换。 */
+    suspend fun setContent(recipeId: Long, section: ContentSection, lines: List<ContentLine>) = io {
+        val cleaned = ContentOutline.normalize(lines)
+        recipeDao.replaceContent(
+            recipeId = recipeId,
+            section = section,
+            items = cleaned.mapIndexed { index, line ->
+                ContentBlockEntity(
+                    recipeId = recipeId,
+                    section = section,
+                    kind = if (line.isHeading) BlockKind.HEADING else BlockKind.LIST_ITEM,
+                    level = line.level,
+                    text = line.text,
+                    sortOrder = index,
+                )
+            },
+        )
     }
 
     /** 把食谱的分类整体设成 [categoryIds]（多退少补）。 */

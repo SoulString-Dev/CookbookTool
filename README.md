@@ -49,11 +49,24 @@ bash scripts/build.sh test        # JVM 单测
 分类、原料也参与匹配但排在菜名后面。拼音表由 `scripts/gen_pinyin_table.py` 从 Unihan 生成，
 多音字（如"茄" jiā/qié）两个声母都认，所以 fqcd 和 fjcd 都搜得到。
 
+## 编辑行为的一处约定：正文只在保存时落地
+
+编辑原料、做法、备注时，界面自己攒一份草稿（`IngredientEditScreen` / `ContentEditScreen`），
+点「完成」才整份写回（`replaceIngredients` / `replaceContent`：先删后插，走一个事务）。
+所以：
+
+- 拖动排序、行首空格缩进、句号转三级标题，全是对草稿里的小数据做确定性变换，不碰数据库；
+- 中途按返回 = 放弃改动，不会留下半截数据；
+- 空行在存库前会被丢掉（结构化模型里它没有意义，Markdown 解析时也一样）。
+
+Markdown 的读写都在 `RecipeMarkdown` 里（`serialize` / `parse` 互为逆运算，有 round-trip 单测）。
+详情页右上角的「Markdown」按钮可以把当前这道菜导出成 Markdown 并复制走。
+
 ## 进度
 
 - [x] **M0** 工程骨架：Gradle/Compose/Room 空库、侧边栏、两个主界面空状态、餐段规则与单测
 - [x] **M1** 食谱列表、模糊搜索、长按菜单、批量多选、加号新增（详情页暂时只读，编辑留到 M2）
-- [ ] **M2** 详情页与文本编辑（原料拖动、做法缩进、分类 tag、Markdown 序列化器）
+- [x] **M2** 详情页与文本编辑（原料拖动、做法缩进/句号三级标题、分类 tag、Markdown 序列化器）
 - [ ] **M3** 图片：拍照/相册、排序、封面、黑底预览
 - [ ] **M4** 饮食历史：记录流程、列表、编辑、整餐交换、批量删除
 - [ ] **M5** 导出导入备份、打磨、出正式包

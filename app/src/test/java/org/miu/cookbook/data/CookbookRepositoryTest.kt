@@ -13,8 +13,12 @@ import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.miu.cookbook.data.db.AppDatabase
+import org.miu.cookbook.data.db.ContentSection
 import org.miu.cookbook.data.db.MealLogEntity
 import org.miu.cookbook.domain.meal.MealSlot
+import org.miu.cookbook.domain.recipe.ContentLine
+import org.miu.cookbook.domain.recipe.IngredientLine
+import org.miu.cookbook.ui.recipes.contentLines
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
 
@@ -54,6 +58,10 @@ class CookbookRepositoryTest {
 
     private fun linksOf(recipeId: Long): Set<Long> = runBlocking {
         repository.linkedCategoryIds(recipeId)
+    }
+
+    private fun detailOf(recipeId: Long) = runBlocking {
+        repository.recipeDetail(recipeId).first()!!
     }
 
     @Test
@@ -147,5 +155,67 @@ class CookbookRepositoryTest {
 
         assertNotEquals(first, second)
         assertEquals(listOf("第二道", "第一道"), titles())
+    }
+
+    @Test
+    fun `原料整份替换后按顺序读回来`() {
+        val recipe = runBlocking { repository.createRecipe("番茄炒蛋") }
+        runBlocking {
+            repository.setIngredients(
+                recipe,
+                listOf(
+                    IngredientLine("鸡蛋", "3", "个"),
+                    IngredientLine("番茄", "2", "个"),
+                    IngredientLine(), // 空行要被丢掉
+                    IngredientLine("盐", "适量", ""),
+                ),
+            )
+        }
+
+        val stored = runBlocking { detailOf(recipe) }
+        assertEquals(
+            listOf(
+                IngredientLine("鸡蛋", "3", "个"),
+                IngredientLine("番茄", "2", "个"),
+                IngredientLine("盐", "适量", ""),
+            ),
+            stored.ingredients.sortedBy { it.sortOrder }
+                .map { IngredientLine(it.name, it.amount, it.unit) },
+        )
+
+        // 再存一次只有一行，之前的三行不能剩下来
+        runBlocking { repository.setIngredients(recipe, listOf(IngredientLine("番茄", "1", "个"))) }
+        assertEquals(
+            listOf(IngredientLine("番茄", "1", "个")),
+            runBlocking { detailOf(recipe) }.ingredients.map { IngredientLine(it.name, it.amount, it.unit) },
+        )
+    }
+
+    @Test
+    fun `做法带层级和三级标题存读一致`() {
+        val recipe = runBlocking { repository.createRecipe("番茄炒蛋") }
+        val directions = listOf(
+            ContentLine("打散鸡蛋"),
+            ContentLine("热锅下油"),
+            ContentLine("下蛋液", level = 1),
+            ContentLine("火候", isHeading = true),
+            ContentLine("中小火"),
+        )
+
+        runBlocking { repository.setContent(recipe, ContentSection.DIRECTIONS, directions) }
+
+        val stored = runBlocking { detailOf(recipe) }
+        val lines = stored.contentLines(ContentSection.DIRECTIONS)
+        assertEquals(directions, lines)
+        // 做法不会跑到备注里去
+        assertEquals(emptyList<ContentLine>(), stored.contentLines(ContentSection.NOTE))
+
+        // 备注是另一段，互不干扰
+        runBlocking {
+            repository.setContent(recipe, ContentSection.NOTE, listOf(ContentLine("剩下的汤别倒")))
+        }
+        val after = runBlocking { detailOf(recipe) }
+        assertEquals(directions, after.contentLines(ContentSection.DIRECTIONS))
+        assertEquals(listOf(ContentLine("剩下的汤别倒")), after.contentLines(ContentSection.NOTE))
     }
 }

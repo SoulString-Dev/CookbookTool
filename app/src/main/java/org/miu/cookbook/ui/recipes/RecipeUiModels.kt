@@ -6,26 +6,10 @@ import org.miu.cookbook.data.db.ContentSection
 import org.miu.cookbook.data.db.IngredientEntity
 import org.miu.cookbook.data.db.RecipeDetail
 import org.miu.cookbook.data.db.RecipeListRow
+import org.miu.cookbook.domain.recipe.ContentLine
+import org.miu.cookbook.domain.recipe.IngredientLine
 import org.miu.cookbook.domain.search.FuzzySearch
 import java.io.File
-
-/** 原料的一行：「鸡蛋」+「2」+「个」。数量和量词都可以为空。 */
-data class IngredientLine(
-    val name: String,
-    val amount: String = "",
-    val unit: String = "",
-) {
-    /** 「鸡蛋 2个」「盐 适量」「番茄」——没写数量就只显示名字。 */
-    val display: String
-        get() = buildString {
-            append(name)
-            if (amount.isNotBlank()) {
-                append(' ')
-                append(amount)
-                if (unit.isNotBlank()) append(unit)
-            }
-        }
-}
 
 /** 列表页的一行。 */
 data class RecipeListItem(
@@ -50,13 +34,6 @@ data class RecipeListItem(
         const val MAX_SUMMARY_INGREDIENTS = 4
     }
 }
-
-/** 做法/备注里的一行：有序列表项（带缩进层级）或三级标题。 */
-data class ContentLine(
-    val text: String,
-    val level: Int,
-    val isHeading: Boolean,
-)
 
 /** 详情页渲染用。 */
 data class RecipeDetailUi(
@@ -103,6 +80,10 @@ fun RecipeDetail.toDetailUi(baseDir: File): RecipeDetailUi {
 }
 
 private fun IngredientEntity.toLine() = IngredientLine(name = name, amount = amount, unit = unit)
+
+/** 编辑页要用：把库里存的正文行取出来（详情页走 [toDetailUi] 已经分好了）。 */
+fun RecipeDetail.contentLines(section: ContentSection): List<ContentLine> =
+    contentBlocks.linesOf(section)
 
 private fun List<ContentBlockEntity>.linesOf(section: ContentSection): List<ContentLine> =
     filter { it.section == section }

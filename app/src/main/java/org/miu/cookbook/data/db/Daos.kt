@@ -9,42 +9,83 @@ import androidx.room.Update
 import kotlinx.coroutines.flow.Flow
 
 @Dao
-interface RecipeDao {
+abstract class RecipeDao {
 
     @Query("SELECT * FROM recipe ORDER BY created_at DESC, id DESC")
-    fun observeAll(): Flow<List<RecipeEntity>>
+    abstract fun observeAll(): Flow<List<RecipeEntity>>
 
     /** 列表页要用的全部信息（菜名/分类/原料/封面）。 */
     @Transaction
     @Query("SELECT * FROM recipe ORDER BY created_at DESC, id DESC")
-    fun observeAllWithDetails(): Flow<List<RecipeListRow>>
+    abstract fun observeAllWithDetails(): Flow<List<RecipeListRow>>
 
     @Query("SELECT * FROM recipe WHERE id = :id")
-    fun observeById(id: Long): Flow<RecipeEntity?>
+    abstract fun observeById(id: Long): Flow<RecipeEntity?>
 
     /** 详情页要用的全部信息（多了正文）。 */
     @Transaction
     @Query("SELECT * FROM recipe WHERE id = :id")
-    fun observeDetail(id: Long): Flow<RecipeDetail?>
+    abstract fun observeDetail(id: Long): Flow<RecipeDetail?>
 
     @Query("SELECT * FROM recipe WHERE id = :id")
-    suspend fun findById(id: Long): RecipeEntity?
+    abstract suspend fun findById(id: Long): RecipeEntity?
 
     @Query("SELECT COUNT(*) FROM recipe")
-    fun observeCount(): Flow<Int>
+    abstract fun observeCount(): Flow<Int>
 
     @Insert
-    suspend fun insert(recipe: RecipeEntity): Long
+    abstract suspend fun insert(recipe: RecipeEntity): Long
 
     @Update
-    suspend fun update(recipe: RecipeEntity)
+    abstract suspend fun update(recipe: RecipeEntity)
 
     @Query("DELETE FROM recipe WHERE id = :id")
-    suspend fun delete(id: Long)
+    abstract suspend fun delete(id: Long)
 
     /** 批量删除；饮食历史靠外键级联一起删掉。 */
     @Query("DELETE FROM recipe WHERE id IN (:ids)")
-    suspend fun deleteByIds(ids: List<Long>)
+    abstract suspend fun deleteByIds(ids: List<Long>)
+
+    @Query("UPDATE recipe SET title = :title, updated_at = :updatedAt WHERE id = :id")
+    abstract suspend fun updateTitle(id: Long, title: String, updatedAt: Long)
+
+    // ---------- 原料 / 做法备注：整体替换 ----------
+    //
+    // 编辑界面是「改完一整份再存」，所以这里就按整份替换写：
+    // 先删后插，全在一个事务里，中途崩了也不会留半份数据。
+
+    @Query("DELETE FROM ingredient WHERE recipe_id = :recipeId")
+    abstract suspend fun deleteIngredientsFor(recipeId: Long)
+
+    @Query("DELETE FROM content_block WHERE recipe_id = :recipeId AND section = :section")
+    abstract suspend fun deleteContentFor(recipeId: Long, section: ContentSection)
+
+    @Insert
+    abstract suspend fun insertIngredients(items: List<IngredientEntity>)
+
+    @Insert
+    abstract suspend fun insertContentBlocks(items: List<ContentBlockEntity>)
+
+    @Transaction
+    open suspend fun replaceIngredients(recipeId: Long, items: List<IngredientEntity>) {
+        deleteIngredientsFor(recipeId)
+        if (items.isNotEmpty()) insertIngredients(items)
+        touch(recipeId, System.currentTimeMillis())
+    }
+
+    @Transaction
+    open suspend fun replaceContent(
+        recipeId: Long,
+        section: ContentSection,
+        items: List<ContentBlockEntity>,
+    ) {
+        deleteContentFor(recipeId, section)
+        if (items.isNotEmpty()) insertContentBlocks(items)
+        touch(recipeId, System.currentTimeMillis())
+    }
+
+    @Query("UPDATE recipe SET updated_at = :updatedAt WHERE id = :id")
+    abstract suspend fun touch(id: Long, updatedAt: Long)
 }
 
 @Dao
