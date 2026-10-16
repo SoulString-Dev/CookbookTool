@@ -23,8 +23,6 @@ import androidx.compose.material.icons.automirrored.filled.KeyboardArrowLeft
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.DateRange
-import android.widget.Toast
-
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.AssistChip
 import androidx.compose.material3.DatePicker
@@ -49,7 +47,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.layout.ContentScale
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -60,6 +57,7 @@ import java.time.LocalDate
 import java.time.LocalDateTime
 import kotlinx.coroutines.launch
 import org.miu.cookbook.R
+import org.miu.cookbook.ui.components.LocalMessenger
 import org.miu.cookbook.data.CookbookRepository
 import org.miu.cookbook.domain.meal.MealSlot
 import org.miu.cookbook.domain.meal.MealTime
@@ -413,7 +411,8 @@ fun DayEditDialog(
         },
     )
 
-    val context = LocalContext.current
+    val messenger = LocalMessenger.current
+    val swappedMessage = stringResource(R.string.meal_swapped)
     moving?.let { fromSlot ->
         MoveMealDialog(
             fromDate = fromDate,
@@ -431,13 +430,7 @@ fun DayEditDialog(
                             toDay = epochDayOf(toDate),
                             toSlot = toSlot,
                         )
-                        if (swapped) {
-                            Toast.makeText(
-                                context,
-                                context.getString(R.string.meal_swapped),
-                                Toast.LENGTH_SHORT,
-                            ).show()
-                        }
+                        if (swapped) messenger.show(swappedMessage)
                     }
                 }
             },

@@ -23,7 +23,6 @@ import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
-import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Star
 import androidx.compose.material3.AlertDialog
@@ -162,14 +161,12 @@ fun ImageEditScreen(recipeId: Long, onDone: () -> Unit) {
                     .padding(horizontal = 4.dp, vertical = 4.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                IconButton(onClick = onDone) {
-                    Icon(Icons.Filled.Close, contentDescription = stringResource(R.string.action_done), tint = Color.White)
-                }
+                // 标题和返回在常驻顶栏上，这一行只放这一页自己的操作
                 Text(
-                    text = stringResource(R.string.image_edit_title) + "  " +
-                        stringResource(R.string.image_counter, pagerState.currentPage + 1, images.size),
+                    text = stringResource(R.string.image_counter, pagerState.currentPage + 1, images.size),
                     color = Color.White,
                     style = MaterialTheme.typography.titleMedium,
+                    modifier = Modifier.padding(start = 12.dp),
                 )
                 Spacer(Modifier.weight(1f))
                 IconButton(

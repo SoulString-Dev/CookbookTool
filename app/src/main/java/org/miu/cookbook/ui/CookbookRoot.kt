@@ -1,6 +1,5 @@
 package org.miu.cookbook.ui
 
-import android.widget.Toast
 import androidx.annotation.StringRes
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.height
@@ -9,7 +8,6 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.List
 import androidx.compose.material.icons.filled.Add
-import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.DateRange
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Menu
@@ -25,10 +23,13 @@ import androidx.compose.material3.ModalNavigationDrawer
 import androidx.compose.material3.NavigationDrawerItem
 import androidx.compose.material3.NavigationDrawerItemDefaults
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.rememberDrawerState
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -36,7 +37,6 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
@@ -53,12 +53,15 @@ import org.miu.cookbook.R
 import org.miu.cookbook.data.db.ContentSection
 import org.miu.cookbook.di.LocalAppContainer
 import org.miu.cookbook.ui.backup.BackupMenu
+import org.miu.cookbook.ui.components.LocalMessenger
+import org.miu.cookbook.ui.components.rememberMessenger
 import org.miu.cookbook.ui.history.MealHistoryScreen
 import org.miu.cookbook.ui.recipes.ImageEditScreen
 import org.miu.cookbook.ui.recipes.RecipeDetailScreen
 import org.miu.cookbook.ui.recipes.RecipeDetailState
 import org.miu.cookbook.ui.recipes.RecipeListScreen
 import org.miu.cookbook.ui.recipes.edit.ContentEditScreen
+import org.miu.cookbook.ui.recipes.edit.EditorTopBarActions
 import org.miu.cookbook.ui.recipes.edit.IngredientEditScreen
 import org.miu.cookbook.ui.theme.ThemeMode
 
@@ -107,7 +110,10 @@ fun CookbookRoot(
     val drawerState = rememberDrawerState(DrawerValue.Closed)
     val scope = rememberCoroutineScope()
     val container = LocalAppContainer.current
-    val context = LocalContext.current
+
+    // 提示走应用自己的 Snackbar，颜色跟着主题（系统 Toast 切不动日夜模式）
+    val snackbarHostState = remember { SnackbarHostState() }
+    val messenger = rememberMessenger(snackbarHostState)
 
     val backStackEntry by navController.currentBackStackEntryAsState()
     val route = backStackEntry?.destination?.route
@@ -126,11 +132,18 @@ fun CookbookRoot(
     val routeRecipeId = backStackEntry?.arguments?.getLong(ARG_RECIPE_ID) ?: 0L
     val detailState = remember(routeRecipeId) { RecipeDetailState() }
 
+    // 子编辑器（原料 / 做法备注）把「取消 / 完成」挂到这里，由常驻顶栏来画
+    val editorActions = remember(route) { EditorTopBarActions() }
+
     // 顶栏**常驻**：进详情页时不再整条消失（那样切换时闪一下很突兀），
     // 只是把标题换成当前页面、把汉堡换成返回箭头。
     val sectionName = backStackEntry?.arguments?.getString(ARG_CONTENT_SECTION)
     val topTitle = when {
         mainDestination != null -> stringResource(mainDestination.labelRes)
+        route == ROUTE_RECIPE_DETAIL -> stringResource(
+            if (detailState.editing) R.string.recipe_edit_title else R.string.recipe_detail_title,
+        )
+
         route == ROUTE_INGREDIENT_EDIT -> stringResource(R.string.section_ingredients)
         route == ROUTE_IMAGE_EDIT -> stringResource(R.string.image_edit_title)
         route == ROUTE_CONTENT_EDIT -> when (sectionName) {
@@ -141,11 +154,7 @@ fun CookbookRoot(
         else -> stringResource(R.string.app_name)
     }
 
-    // 三个子编辑器自带 EditorTopBar（取消/标题/完成），顶栏不再叠一层
-    val subEditor = route == ROUTE_INGREDIENT_EDIT ||
-        route == ROUTE_IMAGE_EDIT ||
-        route == ROUTE_CONTENT_EDIT
-
+    CompositionLocalProvider(LocalMessenger provides messenger) {
     ModalNavigationDrawer(
         drawerState = drawerState,
         drawerContent = {
@@ -199,8 +208,9 @@ fun CookbookRoot(
         },
     ) {
         Scaffold(
+            snackbarHost = { SnackbarHost(snackbarHostState) },
             topBar = {
-                if (!subEditor) {
+                run {
                     TopAppBar(
                         title = { Text(topTitle) },
                         navigationIcon = {
@@ -213,8 +223,12 @@ fun CookbookRoot(
                                 }
                             } else {
                                 IconButton(onClick = {
-                                    // 详情页在编辑态时，返回箭头先退出编辑态（跟系统返回键一致）
-                                    if (route == ROUTE_RECIPE_DETAIL && detailState.editing) {
+                                    // 从只读详情点进编辑态时，返回箭头先退出编辑态；
+                                    // 本来就是从列表的「编辑食谱」进来的，返回就直接回列表
+                                    if (route == ROUTE_RECIPE_DETAIL &&
+                                        detailState.editing &&
+                                        !detailState.enteredAsEditor
+                                    ) {
                                         detailState.editing = false
                                     } else {
                                         navController.popBackStack()
@@ -228,35 +242,39 @@ fun CookbookRoot(
                             }
                         },
                         actions = {
-                            if (mainDestination != null) {
-                                // 备份、多选都只放在两个主界面上
-                                BackupMenu(
+                            when {
+                                mainDestination != null -> BackupMenu(
                                     repository = container.repository,
-                                    onMessage = { message ->
-                                        Toast.makeText(context, message, Toast.LENGTH_LONG).show()
-                                    },
+                                    onMessage = { message -> messenger.show(message) },
                                     onStartSelection = { selectionRequested = true },
                                 )
-                            } else if (route == ROUTE_RECIPE_DETAIL && detailState.available) {
-                                // 详情页的操作都在顶栏上：看 Markdown、进/出编辑态
-                                TextButton(onClick = { detailState.markdownVisible = true }) {
-                                    Text(stringResource(R.string.recipe_view_markdown))
+
+                                // 只读时才有 Markdown 和铅笔；编辑态是即时落盘的，顶栏不留按钮
+                                route == ROUTE_RECIPE_DETAIL -> if (!detailState.editing &&
+                                    detailState.available
+                                ) {
+                                    TextButton(onClick = { detailState.markdownVisible = true }) {
+                                        Text(stringResource(R.string.recipe_view_markdown))
+                                    }
+                                    IconButton(onClick = { detailState.editing = true }) {
+                                        Icon(
+                                            imageVector = Icons.Filled.Edit,
+                                            contentDescription = stringResource(R.string.recipe_edit_title),
+                                        )
+                                    }
                                 }
-                                IconButton(onClick = { detailState.editing = !detailState.editing }) {
-                                    Icon(
-                                        imageVector = if (detailState.editing) {
-                                            Icons.Filled.Check
-                                        } else {
-                                            Icons.Filled.Edit
-                                        },
-                                        contentDescription = stringResource(
-                                            if (detailState.editing) {
-                                                R.string.action_done
-                                            } else {
-                                                R.string.recipe_edit_title
-                                            },
-                                        ),
-                                    )
+
+                                route == ROUTE_INGREDIENT_EDIT || route == ROUTE_CONTENT_EDIT -> {
+                                    editorActions.cancel?.let { action ->
+                                        TextButton(onClick = action) {
+                                            Text(stringResource(R.string.action_cancel))
+                                        }
+                                    }
+                                    editorActions.done?.let { action ->
+                                        TextButton(onClick = action) {
+                                            Text(stringResource(R.string.action_done))
+                                        }
+                                    }
                                 }
                             }
                         },
@@ -334,6 +352,7 @@ fun CookbookRoot(
                         recipeId = recipeId,
                         onDone = { navController.popBackStack() },
                         onCancel = { navController.popBackStack() },
+                        topBarActions = editorActions,
                     )
                 }
                 composable(
@@ -362,9 +381,11 @@ fun CookbookRoot(
                         section = section,
                         onDone = { navController.popBackStack() },
                         onCancel = { navController.popBackStack() },
+                        topBarActions = editorActions,
                     )
                 }
             }
         }
+    }
     }
 }

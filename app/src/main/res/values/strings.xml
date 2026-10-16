@@ -83,6 +83,7 @@
     <string name="recipe_cover_placeholder">还没有图片</string>
 
     <!-- M2：文本编辑 -->
+    <string name="recipe_detail_title">食谱详情</string>
     <string name="recipe_edit_title">编辑食谱</string>
     <string name="recipe_view_markdown">Markdown</string>
     <string name="recipe_markdown_copied">复制成功</string>

@@ -32,6 +32,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
@@ -64,6 +65,7 @@ fun IngredientEditScreen(
     recipeId: Long,
     onDone: () -> Unit,
     onCancel: () -> Unit,
+    topBarActions: EditorTopBarActions = remember { EditorTopBarActions() },
 ) {
     val repository = LocalAppContainer.current.repository
     val detailFlow = remember(recipeId) { repository.recipeDetail(recipeId) }
@@ -82,18 +84,18 @@ fun IngredientEditScreen(
         }
     }
 
-    Column(Modifier.fillMaxSize()) {
-        EditorTopBar(
-            title = stringResource(R.string.section_ingredients),
-            onCancel = onCancel,
-            onDone = {
-                scope.launch {
-                    repository.setIngredients(recipeId, lines.toList())
-                    onDone()
-                }
-            },
-        )
+    // 顶栏是常驻的，取消 / 完成由它来画，这里只把两个动作挂上去
+    SideEffect {
+        topBarActions.cancel = onCancel
+        topBarActions.done = {
+            scope.launch {
+                repository.setIngredients(recipeId, lines.toList())
+                onDone()
+            }
+        }
+    }
 
+    Column(Modifier.fillMaxSize()) {
         Column(
             modifier = Modifier
                 .fillMaxSize()
@@ -254,22 +256,3 @@ private fun IngredientRow(
 }
 
 /** 编辑类页面统一的顶栏：左取消、右完成。 */
-@Composable
-fun EditorTopBar(
-    title: String,
-    onCancel: () -> Unit,
-    onDone: () -> Unit,
-    modifier: Modifier = Modifier,
-) {
-    Row(
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.SpaceBetween,
-        modifier = modifier
-            .fillMaxWidth()
-            .padding(horizontal = 8.dp, vertical = 4.dp),
-    ) {
-        TextButton(onClick = onCancel) { Text(stringResource(R.string.action_cancel)) }
-        Text(text = title, style = MaterialTheme.typography.titleMedium)
-        TextButton(onClick = onDone) { Text(stringResource(R.string.action_done)) }
-    }
-}

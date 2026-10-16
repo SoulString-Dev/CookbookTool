@@ -32,4 +32,12 @@ class RecipeDetailState {
 
     /** 只认第一次进来的那个入口参数（长按菜单的「编辑食谱」是直接进编辑态）。 */
     internal var initialized = false
+
+    /**
+     * 进来时就是编辑态（列表长按 →「编辑食谱」）。
+     *
+     * 这种入口下按返回键直接回列表，而不是先掉到只读详情页 —— 这个页面本来就是奔着编辑来的。
+     * 从只读详情页点铅笔进编辑态的情况不算，那种要先退回只读。
+     */
+    internal var enteredAsEditor = false
 }

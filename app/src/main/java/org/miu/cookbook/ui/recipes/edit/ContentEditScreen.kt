@@ -20,6 +20,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
@@ -81,6 +82,7 @@ fun ContentEditScreen(
     section: ContentSection,
     onDone: () -> Unit,
     onCancel: () -> Unit,
+    topBarActions: EditorTopBarActions = remember { EditorTopBarActions() },
 ) {
     val repository = LocalAppContainer.current.repository
     val detailFlow = remember(recipeId) { repository.recipeDetail(recipeId) }
@@ -137,20 +139,18 @@ fun ContentEditScreen(
         pendingFocus = target
     }
 
-    Column(Modifier.fillMaxSize()) {
-        EditorTopBar(
-            title = stringResource(
-                if (section == ContentSection.DIRECTIONS) R.string.section_directions else R.string.section_notes,
-            ),
-            onCancel = onCancel,
-            onDone = {
-                scope.launch {
-                    repository.setContent(recipeId, section, drafts.map { it.asLine() })
-                    onDone()
-                }
-            },
-        )
+    // 顶栏常驻，取消 / 完成由它画
+    SideEffect {
+        topBarActions.cancel = onCancel
+        topBarActions.done = {
+            scope.launch {
+                repository.setContent(recipeId, section, drafts.map { it.asLine() })
+                onDone()
+            }
+        }
+    }
 
+    Column(Modifier.fillMaxSize()) {
         Column(
             modifier = Modifier
                 .fillMaxSize()
@@ -173,10 +173,7 @@ fun ContentEditScreen(
                 Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.Top) {
                     Spacer(Modifier.width((current.level * 20).dp))
 
-                    if (current.isHeading) {
-                        // 编号那列留空，标题自己占满一行
-                        Spacer(Modifier.width(28.dp))
-                    } else {
+                    if (!current.isHeading) {
                         Text(
                             text = "${numbers.getOrElse(index) { 0 }}.",
                             // 和输入框用同一档字号、同一个上边距，序号才会跟第一行文字对齐

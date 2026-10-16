@@ -1,7 +1,5 @@
 package org.miu.cookbook.ui.recipes
 
-import android.widget.Toast
-
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -51,7 +49,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalClipboardManager
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
@@ -70,6 +67,7 @@ import org.miu.cookbook.domain.markdown.MarkdownRecipe
 import org.miu.cookbook.domain.markdown.RecipeMarkdown
 import org.miu.cookbook.domain.recipe.ContentLine
 import org.miu.cookbook.ui.components.EmptyState
+import org.miu.cookbook.ui.components.LocalMessenger
 import org.miu.cookbook.ui.history.RecordMealDialog
 import org.miu.cookbook.ui.history.RecipeMealHistoryDialog
 
@@ -117,11 +115,13 @@ fun RecipeDetailScreen(
         if (!state.initialized) {
             state.initialized = true
             state.editing = startEditing
+            state.enteredAsEditor = startEditing
         }
     }
 
-    // 返回键：编辑态先退出编辑，别一按就把这一页关掉
-    BackHandler(enabled = editing) { state.editing = false }
+    // 返回键：编辑态先退出编辑，别一按就把这一页关掉。
+    // 但「编辑食谱」进来的那种，返回就该回列表（否则退到只读详情页，用户会觉得返回没生效）。
+    BackHandler(enabled = editing && !state.enteredAsEditor) { state.editing = false }
 
     // 退出编辑态时把还在防抖窗口里的菜名补上。编辑态没有「完成」按钮，菜名是自动落盘的。
     LaunchedEffect(editing) {
@@ -294,6 +294,13 @@ fun RecipeDetailScreen(
             if (editing) {
                 Spacer(Modifier.height(8.dp))
                 Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(
+                        imageVector = Icons.AutoMirrored.Filled.List,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.size(20.dp),
+                    )
+                    Spacer(Modifier.width(6.dp))
                     Text(
                         text = stringResource(R.string.recipe_edit_categories),
                         style = Mdh2Style(),
@@ -423,7 +430,8 @@ fun RecipeDetailScreen(
 @Composable
 private fun MarkdownDialog(markdown: String, onDismiss: () -> Unit) {
     val clipboard = LocalClipboardManager.current
-    val context = LocalContext.current
+    val messenger = LocalMessenger.current
+    val copiedMessage = stringResource(R.string.recipe_markdown_copied)
 
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -449,11 +457,7 @@ private fun MarkdownDialog(markdown: String, onDismiss: () -> Unit) {
             TextButton(
                 onClick = {
                     clipboard.setText(AnnotatedString(markdown))
-                    Toast.makeText(
-                        context,
-                        context.getString(R.string.recipe_markdown_copied),
-                        Toast.LENGTH_SHORT,
-                    ).show()
+                    messenger.show(copiedMessage)
                     // 复制完就把浮窗收掉，不用再点一次关闭
                     onDismiss()
                 },
