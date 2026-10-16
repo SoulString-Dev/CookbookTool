@@ -4,6 +4,7 @@ import androidx.room.Dao
 import androidx.room.Insert
 import androidx.room.OnConflictStrategy
 import androidx.room.Query
+import androidx.room.Transaction
 import androidx.room.Update
 import kotlinx.coroutines.flow.Flow
 
@@ -13,8 +14,21 @@ interface RecipeDao {
     @Query("SELECT * FROM recipe ORDER BY created_at DESC, id DESC")
     fun observeAll(): Flow<List<RecipeEntity>>
 
+    /** 列表页要用的全部信息（菜名/分类/原料/封面）。 */
+    @Transaction
+    @Query("SELECT * FROM recipe ORDER BY created_at DESC, id DESC")
+    fun observeAllWithDetails(): Flow<List<RecipeListRow>>
+
     @Query("SELECT * FROM recipe WHERE id = :id")
     fun observeById(id: Long): Flow<RecipeEntity?>
+
+    /** 详情页要用的全部信息（多了正文）。 */
+    @Transaction
+    @Query("SELECT * FROM recipe WHERE id = :id")
+    fun observeDetail(id: Long): Flow<RecipeDetail?>
+
+    @Query("SELECT * FROM recipe WHERE id = :id")
+    suspend fun findById(id: Long): RecipeEntity?
 
     @Query("SELECT COUNT(*) FROM recipe")
     fun observeCount(): Flow<Int>
@@ -27,6 +41,10 @@ interface RecipeDao {
 
     @Query("DELETE FROM recipe WHERE id = :id")
     suspend fun delete(id: Long)
+
+    /** 批量删除；饮食历史靠外键级联一起删掉。 */
+    @Query("DELETE FROM recipe WHERE id IN (:ids)")
+    suspend fun deleteByIds(ids: List<Long>)
 }
 
 @Dao
@@ -34,6 +52,12 @@ interface CategoryDao {
 
     @Query("SELECT * FROM category ORDER BY sort_order, name")
     fun observeAll(): Flow<List<CategoryEntity>>
+
+    @Query("SELECT * FROM category WHERE name = :name LIMIT 1")
+    suspend fun findByName(name: String): CategoryEntity?
+
+    @Query("SELECT COALESCE(MAX(sort_order), 0) FROM category")
+    suspend fun maxSortOrder(): Int
 
     @Insert(onConflict = OnConflictStrategy.IGNORE)
     suspend fun insert(category: CategoryEntity): Long
@@ -46,6 +70,9 @@ interface CategoryDao {
 
     @Query("DELETE FROM recipe_category WHERE recipe_id = :recipeId AND category_id = :categoryId")
     suspend fun unlink(recipeId: Long, categoryId: Long)
+
+    @Query("SELECT category_id FROM recipe_category WHERE recipe_id = :recipeId")
+    suspend fun linkedCategoryIds(recipeId: Long): List<Long>
 }
 
 @Dao
@@ -62,6 +89,13 @@ interface MealLogDao {
 
     @Query("DELETE FROM meal_log WHERE id = :id")
     suspend fun delete(id: Long)
+
+    @Query("SELECT COUNT(*) FROM meal_log WHERE recipe_id = :recipeId")
+    suspend fun countForRecipe(recipeId: Long): Int
+
+    /** 删除食谱前提示「会一并删掉 N 条饮食记录」用。 */
+    @Query("SELECT COUNT(*) FROM meal_log WHERE recipe_id IN (:recipeIds)")
+    suspend fun countForRecipes(recipeIds: List<Long>): Int
 
     /** 未来做“按上次吃的时间加权随机”要用：每道菜最后一次被吃的日子。 */
     @Query("SELECT recipe_id, MAX(epoch_day) AS last_day FROM meal_log GROUP BY recipe_id")

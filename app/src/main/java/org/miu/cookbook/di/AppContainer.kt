@@ -2,6 +2,7 @@ package org.miu.cookbook.di
 
 import android.content.Context
 import androidx.compose.runtime.staticCompositionLocalOf
+import org.miu.cookbook.data.CookbookRepository
 import org.miu.cookbook.data.db.AppDatabase
 import org.miu.cookbook.data.db.CategoryDao
 import org.miu.cookbook.data.db.MealLogDao
@@ -20,6 +21,13 @@ class AppContainer(context: Context) {
     val recipeDao: RecipeDao get() = database.recipeDao()
     val categoryDao: CategoryDao get() = database.categoryDao()
     val mealLogDao: MealLogDao get() = database.mealLogDao()
+
+    val repository: CookbookRepository by lazy {
+        CookbookRepository(recipeDao, categoryDao, mealLogDao)
+    }
+
+    /** 图片存在应用私有目录，库里只记相对路径。 */
+    val filesDir: java.io.File get() = appContext.filesDir
 }
 
 val LocalAppContainer = staticCompositionLocalOf<AppContainer> {

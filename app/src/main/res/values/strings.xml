@@ -16,4 +16,62 @@
     <string name="action_add_recipe">添加食谱</string>
     <string name="action_search">搜索</string>
     <string name="action_edit">编辑</string>
+    <string name="action_delete">删除</string>
+    <string name="action_cancel">取消</string>
+    <string name="action_confirm">确定</string>
+    <string name="action_save">保存</string>
+    <string name="action_done">完成</string>
+    <string name="action_start_selection">多选</string>
+
+    <!-- 搜索栏 -->
+    <string name="search_placeholder">搜菜名、分类或原料</string>
+    <string name="search_clear">清除</string>
+    <string name="search_no_result_title">没找到「%1$s」</string>
+    <string name="search_no_result_hint">菜名、分类、原料都能搜。也可以只打字的首字母，比如 fqcd</string>
+    <string name="search_result_count">找到 %1$d 道</string>
+
+    <!-- 多选 -->
+    <string name="selection_count">已选 %1$d 项</string>
+    <string name="selection_none">点食谱来选</string>
+    <string name="selection_exit">退出多选</string>
+    <string name="selection_set_categories">分类</string>
+
+    <!-- 长按菜单 -->
+    <string name="menu_edit_recipe">编辑食谱</string>
+    <string name="menu_edit_categories">编辑分类</string>
+    <string name="menu_delete">删除</string>
+
+    <!-- 删除确认 -->
+    <string name="delete_title">删除食谱</string>
+    <string name="delete_single_message">确定删除「%1$s」吗？</string>
+    <string name="delete_batch_message">确定删除选中的 %1$d 道食谱吗？</string>
+    <string name="delete_meal_log_note">该食谱有 %1$d 条饮食记录，会一并删除。</string>
+    <string name="delete_meal_log_note_batch">这些食谱共有 %1$d 条饮食记录，会一并删除。</string>
+    <string name="delete_irreversible">删掉就找不回来了。</string>
+    <string name="delete_confirm">确定删除</string>
+
+    <!-- 分类编辑 -->
+    <string name="category_picker_title_single">编辑分类</string>
+    <string name="category_picker_title_batch">给 %1$d 道菜加分类</string>
+    <string name="category_picker_empty">还没有分类，在下面新建一个。</string>
+    <string name="category_picker_hint_batch">勾选要加上的分类，原有的不会动。</string>
+    <string name="category_new_hint">新分类名</string>
+    <string name="category_new_action">新建</string>
+
+    <!-- 新建食谱 -->
+    <string name="recipe_new_title">新建食谱</string>
+    <string name="recipe_new_name_label">菜名</string>
+    <string name="recipe_new_name_empty">写好菜名才能保存</string>
+    <string name="recipe_new_hint">比如：番茄炒蛋</string>
+
+    <!-- 详情/编辑（M2 接上，先占位） -->
+    <string name="recipe_detail_placeholder_title">这道菜还没写内容</string>
+    <string name="recipe_detail_placeholder_hint">下一阶段接上编辑界面</string>
+    <string name="recipe_not_found">这道菜已经不在了</string>
+    <string name="recipe_not_found_hint">可能刚刚被删掉了</string>
+    <string name="action_back">返回</string>
+    <string name="section_ingredients">原料</string>
+    <string name="section_directions">做法</string>
+    <string name="section_notes">备注</string>
+    <string name="recipe_cover_placeholder">还没有图片</string>
 </resources>

@@ -26,19 +26,25 @@ import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.rememberDrawerState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import androidx.navigation.NavGraph.Companion.findStartDestination
+import androidx.navigation.NavType
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
+import androidx.navigation.navArgument
 import kotlinx.coroutines.launch
 import org.miu.cookbook.R
 import org.miu.cookbook.ui.history.MealHistoryScreen
+import org.miu.cookbook.ui.recipes.RecipeDetailScreen
 import org.miu.cookbook.ui.recipes.RecipeListScreen
 
 /** 侧边栏里的两个主界面。 */
@@ -51,6 +57,12 @@ enum class MainDestination(
     History("history", R.string.dest_history, Icons.Filled.DateRange),
 }
 
+/** 食谱详情路由。 */
+private const val ROUTE_RECIPE_DETAIL = "recipe/{recipeId}"
+private const val ARG_RECIPE_ID = "recipeId"
+
+private fun recipeDetailRoute(recipeId: Long) = "recipe/$recipeId"
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun CookbookRoot() {
@@ -59,8 +71,11 @@ fun CookbookRoot() {
     val scope = rememberCoroutineScope()
 
     val backStackEntry by navController.currentBackStackEntryAsState()
-    val route = backStackEntry?.destination?.route ?: MainDestination.Recipes.route
-    val current = MainDestination.entries.firstOrNull { it.route == route } ?: MainDestination.Recipes
+    val route = backStackEntry?.destination?.route
+    val mainDestination = MainDestination.entries.firstOrNull { it.route == route }
+
+    // 右下角加号：点一下让食谱页弹「新建食谱」
+    var newRecipeRequested by remember { mutableStateOf(false) }
 
     ModalNavigationDrawer(
         drawerState = drawerState,
@@ -77,7 +92,7 @@ fun CookbookRoot() {
                     NavigationDrawerItem(
                         label = { Text(stringResource(destination.labelRes)) },
                         icon = { Icon(destination.icon, contentDescription = null) },
-                        selected = destination == current,
+                        selected = destination == mainDestination,
                         onClick = {
                             scope.launch { drawerState.close() }
                             if (destination.route != route) {
@@ -98,21 +113,24 @@ fun CookbookRoot() {
     ) {
         Scaffold(
             topBar = {
-                TopAppBar(
-                    title = { Text(stringResource(current.labelRes)) },
-                    navigationIcon = {
-                        IconButton(onClick = { scope.launch { drawerState.open() } }) {
-                            Icon(
-                                imageVector = Icons.Filled.Menu,
-                                contentDescription = stringResource(R.string.drawer_open),
-                            )
-                        }
-                    },
-                )
+                // 详情页有自己的返回栏，这里不显示
+                if (mainDestination != null) {
+                    TopAppBar(
+                        title = { Text(stringResource(mainDestination.labelRes)) },
+                        navigationIcon = {
+                            IconButton(onClick = { scope.launch { drawerState.open() } }) {
+                                Icon(
+                                    imageVector = Icons.Filled.Menu,
+                                    contentDescription = stringResource(R.string.drawer_open),
+                                )
+                            }
+                        },
+                    )
+                }
             },
             floatingActionButton = {
-                if (current == MainDestination.Recipes) {
-                    FloatingActionButton(onClick = { /* M1：新增食谱 */ }) {
+                if (route == MainDestination.Recipes.route) {
+                    FloatingActionButton(onClick = { newRecipeRequested = true }) {
                         Icon(
                             imageVector = Icons.Filled.Add,
                             contentDescription = stringResource(R.string.action_add_recipe),
@@ -127,10 +145,25 @@ fun CookbookRoot() {
                 modifier = Modifier.padding(innerPadding),
             ) {
                 composable(MainDestination.Recipes.route) {
-                    RecipeListScreen()
+                    RecipeListScreen(
+                        onOpenRecipe = { navController.navigate(recipeDetailRoute(it)) },
+                        onEditRecipe = { navController.navigate(recipeDetailRoute(it)) },
+                        newRecipeRequested = newRecipeRequested,
+                        onNewRecipeHandled = { newRecipeRequested = false },
+                    )
                 }
                 composable(MainDestination.History.route) {
                     MealHistoryScreen()
+                }
+                composable(
+                    route = ROUTE_RECIPE_DETAIL,
+                    arguments = listOf(navArgument(ARG_RECIPE_ID) { type = NavType.LongType }),
+                ) { entry ->
+                    val recipeId = entry.arguments?.getLong(ARG_RECIPE_ID) ?: return@composable
+                    RecipeDetailScreen(
+                        recipeId = recipeId,
+                        onBack = { navController.popBackStack() },
+                    )
                 }
             }
         }
