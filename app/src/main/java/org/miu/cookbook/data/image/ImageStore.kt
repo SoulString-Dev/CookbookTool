@@ -85,65 +85,85 @@ object ImageStore {
     }
 
     // 统一走流：拍照得到的是临时文件，相册给的是 content Uri，两边都用同一条解码路径。
-    // 整段包在 runCatching 里：文件损坏、权限收回、内存不够都退回「读不出来」，别把界面炸掉。
-    private fun save(openStream: () -> InputStream?, baseDir: File): ImportedImage? = runCatching {
-        val bounds = readBounds(openStream) ?: return@runCatching null
+    // 文件损坏、权限收回、内存不够都退回「读不出来」，别把界面炸掉：位图在 finally 里放掉，
+    // 写了一半的文件在 catch 里删掉。
+    private fun save(openStream: () -> InputStream?, baseDir: File): ImportedImage? {
+        val bitmaps = mutableListOf<Bitmap>()
+        val written = mutableListOf<File>()
 
-        val options = BitmapFactory.Options().apply {
-            inSampleSize = sampleSizeFor(bounds.outWidth, bounds.outHeight, MAX_EDGE)
+        // createScaledBitmap 在尺寸没变时会返回同一个对象，所以按身份去重，保证每张只 recycle 一次
+        fun track(bitmap: Bitmap): Bitmap {
+            if (bitmaps.none { it === bitmap }) bitmaps += bitmap
+            return bitmap
         }
-        val decodeStream = openStream() ?: return@runCatching null
-        val decoded = decodeStream.use { BitmapFactory.decodeStream(it, null, options) }
-            ?: return@runCatching null
 
-        val orientation = runCatching {
-            openStream()?.use {
-                ExifInterface(it).getAttributeInt(
-                    ExifInterface.TAG_ORIENTATION,
-                    ExifInterface.ORIENTATION_NORMAL,
-                )
+        return try {
+            val bounds = readBounds(openStream) ?: return null
+
+            val options = BitmapFactory.Options().apply {
+                inSampleSize = sampleSizeFor(bounds.outWidth, bounds.outHeight, MAX_EDGE)
             }
-        }.getOrNull()
-        val fixed = applyOrientation(decoded, orientation)
+            val decodeStream = openStream() ?: return null
+            val decoded = track(decodeStream.use { BitmapFactory.decodeStream(it, null, options) } ?: return null)
 
-        val (targetWidth, targetHeight) = targetSize(fixed.width, fixed.height, MAX_EDGE)
-        val scaled = if (targetWidth != fixed.width || targetHeight != fixed.height) {
-            Bitmap.createScaledBitmap(fixed, targetWidth, targetHeight, true)
-        } else {
-            fixed
+            val orientation = runCatching {
+                openStream()?.use {
+                    ExifInterface(it).getAttributeInt(
+                        ExifInterface.TAG_ORIENTATION,
+                        ExifInterface.ORIENTATION_NORMAL,
+                    )
+                }
+            }.getOrNull()
+            val fixed = track(applyOrientation(decoded, orientation))
+
+            val (targetWidth, targetHeight) = targetSize(fixed.width, fixed.height, MAX_EDGE)
+            val scaled = track(
+                if (targetWidth != fixed.width || targetHeight != fixed.height) {
+                    Bitmap.createScaledBitmap(fixed, targetWidth, targetHeight, true)
+                } else {
+                    fixed
+                },
+            )
+
+            val name = "${UUID.randomUUID()}.jpg"
+            val imageDir = File(baseDir, IMAGE_DIR).apply { mkdirs() }
+            val thumbDir = File(baseDir, THUMB_DIR).apply { mkdirs() }
+
+            val imageFile = File(imageDir, name)
+            FileOutputStream(imageFile).use { out ->
+                scaled.compress(Bitmap.CompressFormat.JPEG, 88, out)
+            }
+            written += imageFile
+
+            val (thumbWidth, thumbHeight) = targetSize(scaled.width, scaled.height, THUMB_EDGE)
+            val thumb = track(
+                if (thumbWidth != scaled.width || thumbHeight != scaled.height) {
+                    Bitmap.createScaledBitmap(scaled, thumbWidth, thumbHeight, true)
+                } else {
+                    scaled
+                },
+            )
+            val thumbFile = File(thumbDir, name)
+            FileOutputStream(thumbFile).use { out ->
+                thumb.compress(Bitmap.CompressFormat.JPEG, 82, out)
+            }
+            written += thumbFile
+
+            ImportedImage(
+                path = "$IMAGE_DIR/$name",
+                thumbPath = "$THUMB_DIR/$name",
+                width = targetWidth,
+                height = targetHeight,
+            )
+        } catch (t: Throwable) {
+            // 正图写出来了、缩略图没写出来这种半成品要收干净，别留孤儿文件
+            written.forEach { it.delete() }
+            null
+        } finally {
+            // 连续导入几张就是几十 MB 的位图，用完就放掉
+            bitmaps.forEach { it.recycle() }
         }
-
-        val name = "${UUID.randomUUID()}.jpg"
-        val imageDir = File(baseDir, IMAGE_DIR).apply { mkdirs() }
-        val thumbDir = File(baseDir, THUMB_DIR).apply { mkdirs() }
-
-        FileOutputStream(File(imageDir, name)).use { out ->
-            scaled.compress(Bitmap.CompressFormat.JPEG, 88, out)
-        }
-
-        val (thumbWidth, thumbHeight) = targetSize(scaled.width, scaled.height, THUMB_EDGE)
-        val thumb = if (thumbWidth != scaled.width || thumbHeight != scaled.height) {
-            Bitmap.createScaledBitmap(scaled, thumbWidth, thumbHeight, true)
-        } else {
-            scaled
-        }
-        FileOutputStream(File(thumbDir, name)).use { out ->
-            thumb.compress(Bitmap.CompressFormat.JPEG, 82, out)
-        }
-
-        // 连续导入几张就是几十 MB 的位图，用完就放掉
-        if (thumb !== scaled) thumb.recycle()
-        if (scaled !== fixed) scaled.recycle()
-        if (fixed !== decoded) fixed.recycle()
-        decoded.recycle()
-
-        return ImportedImage(
-            path = "$IMAGE_DIR/$name",
-            thumbPath = "$THUMB_DIR/$name",
-            width = targetWidth,
-            height = targetHeight,
-        )
-    }.getOrNull()
+    }
 
     /** 手机横着拍的照片方向信息在 EXIF 里，按它把像素转正，不然进详情页是歪的。 */
     private fun applyOrientation(bitmap: Bitmap, orientation: Int?): Bitmap {

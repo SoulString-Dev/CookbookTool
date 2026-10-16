@@ -29,9 +29,9 @@ import androidx.compose.ui.Modifier
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
+import org.miu.cookbook.di.LocalAppContainer
 import kotlinx.coroutines.launch
 import org.miu.cookbook.R
-import org.miu.cookbook.data.CookbookRepository
 
 /**
  * 分类编辑：
@@ -42,10 +42,11 @@ import org.miu.cookbook.data.CookbookRepository
 @Composable
 fun CategoryPickerDialog(
     recipeIds: List<Long>,
-    repository: CookbookRepository,
     onDismiss: () -> Unit,
     onApplied: () -> Unit,
 ) {
+    // 数据源统一从 LocalAppContainer 取，和别的界面保持一致（不再一层层传 repository）
+    val repository = LocalAppContainer.current.repository
     val categories by repository.categories.collectAsStateWithLifecycle(initialValue = emptyList())
     val single = recipeIds.size == 1
     val scope = rememberCoroutineScope()
@@ -67,10 +68,14 @@ fun CategoryPickerDialog(
         if (name.isEmpty() || working) return
         working = true
         scope.launch {
-            val id = repository.ensureCategory(name)
-            selected = selected + id
-            newName = ""
-            working = false
+            try {
+                val id = repository.ensureCategory(name)
+                selected = selected + id
+                newName = ""
+            } finally {
+                // 失败也得把按钮放开，不然这个弹窗就再也点不动了
+                working = false
+            }
         }
     }
 

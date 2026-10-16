@@ -8,6 +8,7 @@ import org.miu.cookbook.data.db.RecipeDetail
 import org.miu.cookbook.data.db.RecipeListRow
 import org.miu.cookbook.domain.recipe.ContentLine
 import org.miu.cookbook.domain.recipe.IngredientLine
+import org.miu.cookbook.domain.recipe.MAX_RECIPE_IMAGES
 import org.miu.cookbook.domain.search.FuzzySearch
 import java.io.File
 
@@ -48,7 +49,7 @@ data class RecipeDetailUi(
 )
 
 /** 一道菜最多留六张图（需求定的）。 */
-const val MAX_IMAGES = 6
+const val MAX_IMAGES = MAX_RECIPE_IMAGES
 
 fun RecipeListRow.toListItem(baseDir: File): RecipeListItem {
     val ingredientLines = ingredients.sortedBy { it.sortOrder }.map { it.toLine() }

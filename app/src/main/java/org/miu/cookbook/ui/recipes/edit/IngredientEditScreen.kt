@@ -32,7 +32,6 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateListOf
@@ -45,24 +44,20 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.zIndex
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import kotlinx.coroutines.launch
 import org.miu.cookbook.R
 import org.miu.cookbook.di.LocalAppContainer
-import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
-import kotlinx.coroutines.launch
 import org.miu.cookbook.domain.recipe.IngredientLine
 import org.miu.cookbook.domain.recipe.Units
 import kotlin.math.roundToInt
 
 private val RowHeight = 76.dp
-
-/** 停手多久之后落盘（和正文编辑器同一个节奏）。 */
-private const val AutoSaveDelayMillis = 400L
 
 /**
  * 原料编辑：一行三格（名字 / 数量 / 量词），按住左边的把手上下拖就能换顺序。
@@ -79,28 +74,9 @@ fun IngredientEditScreen(
     val detail by detailFlow.collectAsStateWithLifecycle(initialValue = null)
     val lines = remember { mutableStateListOf<IngredientLine>() }
     var loaded by remember { mutableStateOf(false) }
-    var saveJob by remember { mutableStateOf<Job?>(null) }
-    var latestLines by remember { mutableStateOf<List<IngredientLine>>(emptyList()) }
-
     // 一边编一边落盘：停手 400ms 写一次，退出页面时把最后没来得及写的那一下补上
-    fun scheduleSave() {
-        val snapshot = lines.toList()
-        latestLines = snapshot
-        saveJob?.cancel()
-        saveJob = container.appScope.launch {
-            delay(AutoSaveDelayMillis)
-            repository.setIngredients(recipeId, snapshot)
-        }
-    }
-
-    DisposableEffect(Unit) {
-        onDispose {
-            saveJob?.cancel()
-            val snapshot = latestLines
-            if (snapshot.isNotEmpty()) {
-                container.appScope.launch { repository.setIngredients(recipeId, snapshot) }
-            }
-        }
+    val scheduleSave = rememberDebouncedSaver<List<IngredientLine>> { snapshot ->
+        repository.setIngredients(recipeId, snapshot)
     }
 
     LaunchedEffect(detail) {
@@ -134,9 +110,9 @@ fun IngredientEditScreen(
                 onMove = {
                     from, to ->
                     lines.add(to, lines.removeAt(from))
-                    scheduleSave()
+                    scheduleSave(lines.toList())
                 },
-                onEdited = { scheduleSave() },
+                onEdited = { scheduleSave(lines.toList()) },
             )
         }
     }
@@ -229,7 +205,12 @@ private fun IngredientRow(
             modifier = Modifier.padding(horizontal = 4.dp),
         ) {
             // 把手：只有它能发起拖动，免得在输入框里划一下就换了顺序
-            Box(modifier = dragHandleModifier.padding(4.dp)) {
+            val handleLabel = stringResource(R.string.ingredient_drag_handle)
+            Box(
+                modifier = dragHandleModifier
+                    .padding(4.dp)
+                    .semantics { contentDescription = handleLabel },
+            ) {
                 Text(
                     text = "⠿",
                     style = MaterialTheme.typography.titleLarge,
@@ -304,4 +285,3 @@ private fun IngredientRow(
     }
 }
 
-/** 编辑类页面统一的顶栏：左取消、右完成。 */

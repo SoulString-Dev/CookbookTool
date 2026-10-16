@@ -217,9 +217,6 @@ abstract class MealLogDao {
     @Query("SELECT * FROM meal_log WHERE epoch_day = :day AND slot = :slot ORDER BY created_at, id")
     abstract suspend fun forSlot(day: Long, slot: MealSlot): List<MealLogEntity>
 
-    @Query("UPDATE meal_log SET slot = :slot WHERE id = :id")
-    abstract suspend fun updateSlot(id: Long, slot: MealSlot)
-
     @Query("SELECT COUNT(*) FROM meal_log WHERE recipe_id = :recipeId")
     abstract suspend fun countForRecipe(recipeId: Long): Int
 
@@ -264,7 +261,7 @@ abstract class MealLogDao {
         return true
     }
 
-    /** 未来做“按上次吃的时间加权随机”要用：每道菜最后一次被吃的日子。 */
+    /** TODO(未来扩展)：做“按上次吃的时间加权随机”时要用，现在还没有调用点。 */
     @Query("SELECT recipe_id, MAX(epoch_day) AS last_day FROM meal_log GROUP BY recipe_id")
     abstract suspend fun lastCookedDays(): List<RecipeLastCooked>
 
@@ -303,11 +300,6 @@ interface RecipeImageDao {
 
     @Query("UPDATE recipe_image SET is_cover = 1 WHERE id = :imageId")
     suspend fun markCover(imageId: Long)
-
-    @Query(
-        "UPDATE recipe_image SET thumb_path = :thumbPath WHERE recipe_id = :recipeId AND path = :path",
-    )
-    suspend fun updateThumbPath(recipeId: Long, path: String, thumbPath: String)
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertAll(items: List<RecipeImageEntity>)

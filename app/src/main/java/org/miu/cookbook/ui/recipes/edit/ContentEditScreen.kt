@@ -16,7 +16,6 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateListOf
@@ -39,13 +38,10 @@ import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import kotlinx.coroutines.launch
 import org.miu.cookbook.R
 import org.miu.cookbook.data.db.ContentSection
 import org.miu.cookbook.di.LocalAppContainer
-import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
-import kotlinx.coroutines.launch
 import org.miu.cookbook.domain.recipe.ContentLine
 import org.miu.cookbook.domain.recipe.ContentOutline
 import org.miu.cookbook.ui.recipes.MdBodyStyle
@@ -65,9 +61,6 @@ private data class LineDraft(
 
     fun asLine() = ContentLine(text = text, level = level, isHeading = isHeading)
 }
-
-/** 停手多久之后落盘。 */
-private const val AutoSaveDelayMillis = 400L
 
 private fun blankDraft(level: Int = 0, isHeading: Boolean = false) =
     LineDraft(value = TextFieldValue(""), level = level, isHeading = isHeading)
@@ -94,28 +87,9 @@ fun ContentEditScreen(
     val requesters = remember { mutableStateListOf<FocusRequester>() }
     var loaded by remember { mutableStateOf(false) }
     var pendingFocus by remember { mutableStateOf<Int?>(null) }
-    var saveJob by remember { mutableStateOf<Job?>(null) }
-    var latestLines by remember { mutableStateOf<List<ContentLine>>(emptyList()) }
-
     // 一边编一边落盘：停手 400ms 写一次，退出页面时把最后没来得及写的那一下补上
-    fun scheduleSave() {
-        val snapshot = drafts.map { it.asLine() }
-        latestLines = snapshot
-        saveJob?.cancel()
-        saveJob = container.appScope.launch {
-            delay(AutoSaveDelayMillis)
-            repository.setContent(recipeId, section, snapshot)
-        }
-    }
-
-    DisposableEffect(Unit) {
-        onDispose {
-            saveJob?.cancel()
-            val snapshot = latestLines
-            if (snapshot.isNotEmpty()) {
-                container.appScope.launch { repository.setContent(recipeId, section, snapshot) }
-            }
-        }
+    val scheduleSave = rememberDebouncedSaver<List<ContentLine>> { snapshot ->
+        repository.setContent(recipeId, section, snapshot)
     }
 
     LaunchedEffect(detail) {
@@ -149,22 +123,34 @@ fun ContentEditScreen(
         drafts.add(index + 1, blankDraft(level = drafts[index].level))
         requesters.add(index + 1, FocusRequester())
         pendingFocus = index + 1
-        scheduleSave()
+        scheduleSave(drafts.map { it.asLine() })
     }
 
     fun deleteLine(index: Int) {
         if (drafts.size <= 1) {
             drafts[0] = blankDraft()
-            scheduleSave()
+            scheduleSave(drafts.map { it.asLine() })
             return
         }
+        if (index == 0) {
+            // 第一行没有「上一行」可并，只能整行删掉
+            drafts.removeAt(0)
+            requesters.removeAt(0)
+            pendingFocus = 0
+            scheduleSave(drafts.map { it.asLine() })
+            return
+        }
+        // 并进上一行，文本不丢，光标停在接缝处
+        val removed = drafts[index]
+        val previous = drafts[index - 1]
+        val caret = previous.value.text.length
+        drafts[index - 1] = previous.copy(
+            value = TextFieldValue(previous.value.text + removed.value.text, TextRange(caret)),
+        )
         drafts.removeAt(index)
         requesters.removeAt(index)
-        val target = (index - 1).coerceAtLeast(0)
-        val previous = drafts[target]
-        drafts[target] = previous.copy(value = previous.value.copy(selection = TextRange(previous.text.length)))
-        pendingFocus = target
-        scheduleSave()
+        pendingFocus = index - 1
+        scheduleSave(drafts.map { it.asLine() })
     }
 
     Column(Modifier.fillMaxSize()) {
@@ -214,9 +200,9 @@ fun ContentEditScreen(
                         }
                         val updated = when (typed) {
                             // 行首空格 = 往下一层；句号 = 这一行变三级标题（顺手清掉行首空格）
-                            ' ' -> current.copy(
-                                level = (current.level + 1).coerceAtMost(ContentOutline.MAX_LEVEL),
-                            )
+                            ' ' -> current.let { line ->
+                                line.copy(level = ContentOutline.indent(line.asLine()).level)
+                            }
 
                             '.', '。' -> current.let { line ->
                                 val toggled = ContentOutline.toggleHeading(line.asLine())
@@ -233,7 +219,7 @@ fun ContentEditScreen(
                             else -> current.copy(value = new)
                         }
                         drafts[index] = updated
-                        scheduleSave()
+                        scheduleSave(drafts.map { it.asLine() })
                     },
                     // 必须带颜色：BasicTextField 拿到没写颜色的样式会退回黑色，夜间模式就看不见了
                     textStyle = if (draft.isHeading) {
@@ -263,12 +249,14 @@ fun ContentEditScreen(
                                     when {
                                         draft.isHeading -> {
                                             drafts[index] = draft.copy(isHeading = false)
-                                            scheduleSave()
+                                            scheduleSave(drafts.map { it.asLine() })
                                         }
 
                                         draft.level > 0 -> {
-                                            drafts[index] = draft.copy(level = draft.level - 1)
-                                            scheduleSave()
+                                            drafts[index] = draft.copy(
+                                                level = ContentOutline.outdent(draft.asLine()).level,
+                                            )
+                                            scheduleSave(drafts.map { it.asLine() })
                                         }
 
                                         else -> deleteLine(index)

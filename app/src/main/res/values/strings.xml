@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <string name="app_name">菜谱本</string>
+    <string name="app_name">食谱本</string>
 
     <string name="drawer_open">打开侧边栏</string>
     <string name="drawer_close">关闭侧边栏</string>
@@ -96,6 +96,7 @@
     <string name="recipe_section_empty">还没写</string>
     <string name="action_copy">复制</string>
     <string name="action_close">关闭</string>
+    <string name="image_view_index">查看第 %1$d 张图片</string>
 
     <string name="ingredient_edit_hint">按住每行左边的把手可以上下拖动排序；数量填了数字，量词默认是 g。改动会自动保存。</string>
     <string name="ingredient_add">加一行原料</string>
@@ -171,4 +172,6 @@
     <string name="backup_import_confirm">覆盖导入</string>
     <string name="backup_failed">备份失败：%1$s</string>
     <string name="backup_no_stream">打不开这个文件</string>
+    <string name="image_cover_badge">列表图片</string>
+    <string name="ingredient_drag_handle">拖动排序</string>
 </resources>

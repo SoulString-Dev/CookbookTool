@@ -67,6 +67,9 @@ private fun LocalDate.chineseText(): String = "${year}年${monthValue}月${dayOf
 
 private fun epochDayOf(date: LocalDate): Long = date.toEpochDay()
 
+/** 一天的毫秒数，日期选择器只认毫秒。 */
+private const val MILLIS_PER_DAY = 86_400_000L
+
 /**
  * 日历选日期。
  *
@@ -101,7 +104,6 @@ fun MealDatePickerDialog(
     }
 }
 
-private const val MILLIS_PER_DAY = 86_400_000L
 
 /**
  * 「哪一天 · 哪一餐」的选择器：日期可以按天翻、也可以点开日历挑，再加上早/午/晚三个 chip。
@@ -343,7 +345,7 @@ fun DayDetailDialog(
  * 编辑某一天的记录：把某一餐**改到任意一天的任意一餐**（记错日期是最常见的手滑），
  * 或者删掉其中一道菜。
  *
- * 一顿饭里的几道菜永远是整份一起动；目标那一餐如果已经有记录，就并进去，不覆盖也不交换。
+ * 一顿饭里的几道菜永远是整份一起动；目标那一餐如果已经有记录，两餐整体交换（日期和餐段一起换过来）。
  */
 @Composable
 fun DayEditDialog(

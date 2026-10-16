@@ -48,7 +48,7 @@ class BackupCodecTest {
             BackupCodec.decode("""{"hello":"world"}""")
             fail("应该抛异常")
         } catch (e: IllegalArgumentException) {
-            assertEquals("这个文件不是菜谱本的备份", e.message)
+            assertEquals("这个文件不是食谱本的备份", e.message)
         }
     }
 
@@ -58,7 +58,7 @@ class BackupCodecTest {
             BackupCodec.decode("这不是 JSON")
             fail("应该抛异常")
         } catch (e: IllegalArgumentException) {
-            assertEquals("这个文件不是菜谱本的备份", e.message)
+            assertEquals("这个文件不是食谱本的备份", e.message)
         }
     }
 

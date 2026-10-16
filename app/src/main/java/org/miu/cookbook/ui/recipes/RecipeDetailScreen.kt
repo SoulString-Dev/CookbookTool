@@ -5,6 +5,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.animation.Crossfade
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
@@ -38,6 +39,7 @@ import androidx.compose.material3.SuggestionChip
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -57,6 +59,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import coil3.compose.AsyncImage
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -66,6 +69,7 @@ import org.miu.cookbook.di.LocalAppContainer
 import org.miu.cookbook.domain.markdown.MarkdownRecipe
 import org.miu.cookbook.domain.markdown.RecipeMarkdown
 import org.miu.cookbook.domain.recipe.ContentLine
+import org.miu.cookbook.domain.recipe.ContentOutline
 import org.miu.cookbook.ui.components.EmptyState
 import org.miu.cookbook.ui.components.LocalMessenger
 import org.miu.cookbook.ui.history.RecordMealDialog
@@ -133,6 +137,18 @@ fun RecipeDetailScreen(
         }
     }
 
+    // 从长按菜单直接进编辑态时，返回键被禁用（直接 pop），上面那个 LaunchedEffect 不会触发；
+    // 页面自己的 rememberCoroutineScope 随页面销毁一起取消，所以最后一下改动得挂到 appScope 上补写。
+    DisposableEffect(Unit) {
+        onDispose {
+            if (titleDirty) {
+                val pending = titleDraft
+                titleDirty = false
+                container.appScope.launch { repository.setTitle(recipeId, pending) }
+            }
+        }
+    }
+
     Box(modifier = modifier.fillMaxSize()) {
       Column(Modifier.fillMaxSize()) {
         val current = ui
@@ -169,37 +185,38 @@ fun RecipeDetailScreen(
             titleDraft = current.title
         }
 
-        Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .verticalScroll(rememberScrollState())
-                .padding(horizontal = 20.dp),
-        ) {
-            if (editing) {
-                // 编辑态：点这一块进图片编辑（跟点正文进文本编辑是一个套路）
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(top = 8.dp)
-                        .clip(RoundedCornerShape(16.dp))
-                        .background(MaterialTheme.colorScheme.surfaceVariant)
-                        .clickable(onClick = onEditImages)
-                        .padding(12.dp),
-                ) {
-                    if (current.imagePaths.isEmpty()) {
-                        Box(
-                            modifier = Modifier
-                                .size(72.dp)
-                                .clip(RoundedCornerShape(12.dp))
-                                .background(MaterialTheme.colorScheme.surface),
-                            contentAlignment = Alignment.Center,
-                        ) {
-                            Icon(
-                                imageVector = Icons.Filled.Add,
-                                contentDescription = null,
-                                tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                            )
+        Crossfade(targetState = editing, label = "detail-mode") { isEditing ->
+            Column(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .verticalScroll(rememberScrollState())
+                    .padding(horizontal = 20.dp),
+            ) {
+                if (isEditing) {
+                    // 编辑态：点这一块进图片编辑（跟点正文进文本编辑是一个套路）
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(top = 8.dp)
+                            .clip(RoundedCornerShape(16.dp))
+                            .background(MaterialTheme.colorScheme.surfaceVariant)
+                            .clickable(onClick = onEditImages)
+                            .padding(12.dp),
+                    ) {
+                        if (current.imagePaths.isEmpty()) {
+                            Box(
+                                modifier = Modifier
+                                    .size(72.dp)
+                                    .clip(RoundedCornerShape(12.dp))
+                                    .background(MaterialTheme.colorScheme.surface),
+                                contentAlignment = Alignment.Center,
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Filled.Add,
+                                    contentDescription = null,
+                                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
                         }
                     } else {
                         current.imagePaths.take(3).forEach { path ->
@@ -230,6 +247,8 @@ fun RecipeDetailScreen(
             } else if (current.imagePaths.isNotEmpty()) {
                 LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     itemsIndexed(current.imagePaths) { index, path ->
+                        // semantics 块不是 composable 上下文，资源要在外面取好
+                        val imageLabel = stringResource(R.string.image_view_index, index + 1)
                         Box(
                             modifier = Modifier
                                 .size(220.dp)
@@ -237,7 +256,7 @@ fun RecipeDetailScreen(
                                 .background(MaterialTheme.colorScheme.surfaceVariant)
                                 .clickable { viewerIndex = index }
                                 .semantics {
-                                    contentDescription = "$index"
+                                    contentDescription = imageLabel
                                 },
                         ) {
                             AsyncImage(
@@ -253,7 +272,7 @@ fun RecipeDetailScreen(
             }
 
             // 菜名：一级标题。编辑态只让改名字；一级标题本来就固定，界面上不画井号。
-            if (editing) {
+            if (isEditing) {
                 OutlinedTextField(
                     value = titleDraft,
                     onValueChange = { typed ->
@@ -291,7 +310,7 @@ fun RecipeDetailScreen(
                 }
             }
 
-            if (editing) {
+            if (isEditing) {
                 Spacer(Modifier.height(8.dp))
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text(
@@ -309,7 +328,7 @@ fun RecipeDetailScreen(
             if (current.categories.isNotEmpty()) {
                 Spacer(Modifier.height(8.dp))
                 CategoryTags(current.categories)
-            } else if (editing) {
+            } else if (isEditing) {
                 Text(
                     text = stringResource(R.string.recipe_section_empty),
                     style = MaterialTheme.typography.bodySmall,
@@ -320,23 +339,23 @@ fun RecipeDetailScreen(
             IngredientSection(
                 title = stringResource(R.string.section_ingredients),
                 plain = current.ingredients.map { it.display },
-                alwaysShow = editing,
-                onEdit = if (editing) onEditIngredients else null,
+                alwaysShow = isEditing,
+                onEdit = if (isEditing) onEditIngredients else null,
             )
             Section(
                 title = stringResource(R.string.section_directions),
                 lines = current.directions,
-                alwaysShow = editing,
-                onEdit = if (editing) ({ onEditContent(ContentSection.DIRECTIONS) }) else null,
+                alwaysShow = isEditing,
+                onEdit = if (isEditing) ({ onEditContent(ContentSection.DIRECTIONS) }) else null,
             )
             Section(
                 title = stringResource(R.string.section_notes),
                 lines = current.notes,
-                alwaysShow = editing,
-                onEdit = if (editing) ({ onEditContent(ContentSection.NOTE) }) else null,
+                alwaysShow = isEditing,
+                onEdit = if (isEditing) ({ onEditContent(ContentSection.NOTE) }) else null,
             )
 
-            if (!editing &&
+            if (!isEditing &&
                 current.ingredients.isEmpty() &&
                 current.directions.isEmpty() &&
                 current.notes.isEmpty()
@@ -355,6 +374,7 @@ fun RecipeDetailScreen(
             }
 
             Spacer(Modifier.height(48.dp))
+        }
         }
       }
 
@@ -396,7 +416,6 @@ fun RecipeDetailScreen(
     if (categoryPickerOpen) {
         CategoryPickerDialog(
             recipeIds = listOf(recipeId),
-            repository = repository,
             onDismiss = { categoryPickerOpen = false },
             onApplied = { categoryPickerOpen = false },
         )
@@ -543,11 +562,11 @@ private fun EmptySectionHint() {
     )
 }
 
-/** 有序列表：每层自己编号，子层缩进。 */
+/** 有序列表：每层自己编号，子层缩进。编号规则与编辑态共用 [ContentOutline.numbers]。 */
 @Composable
 private fun ContentLines(lines: List<ContentLine>) {
-    val counters = IntArray(3)
-    lines.forEach { line ->
+    val numbers = ContentOutline.numbers(lines)
+    lines.forEachIndexed { index, line ->
         val level = line.level.coerceIn(0, 2)
         if (line.isHeading) {
             Text(
@@ -562,8 +581,6 @@ private fun ContentLines(lines: List<ContentLine>) {
                 ),
             )
         } else {
-            counters[level]++
-            for (i in level + 1..2) counters[i] = 0
             Row(
                 modifier = Modifier.padding(
                     start = (level * 20).dp,
@@ -572,7 +589,7 @@ private fun ContentLines(lines: List<ContentLine>) {
                 ),
             ) {
                 Text(
-                    text = "${counters[level]}.",
+                    text = "${numbers.getOrElse(index) { 0 }}.",
                     style = MdBodyStyle(),
                     modifier = Modifier.width(28.dp),
                 )

@@ -1,5 +1,8 @@
 package org.miu.cookbook.domain.recipe
 
+/** 一道菜最多能放几张图。界面、仓库、备份导入三处都拿它当上限。 */
+const val MAX_RECIPE_IMAGES = 6
+
 /** 原料的一行：「鸡蛋」+「2」+「个」。数量和量词都可以为空。 */
 data class IngredientLine(
     val name: String = "",
@@ -42,9 +45,8 @@ object Units {
      * 这正是需求里说的「如果食材数填写了数字则量词默认填充为 g」。
      */
     fun defaultFor(amount: String, currentUnit: String): String =
-        if (currentUnit.isEmpty() && amount.isDigits()) "g" else currentUnit
+        if (currentUnit.isEmpty() && amount.toDoubleOrNull() != null) "g" else currentUnit
 
-    private fun String.isDigits(): Boolean = isNotEmpty() && all { it.isDigit() }
 }
 
 /**

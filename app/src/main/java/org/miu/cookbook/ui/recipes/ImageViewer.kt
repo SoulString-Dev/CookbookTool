@@ -18,9 +18,11 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.unit.dp
+import org.miu.cookbook.R
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import coil3.compose.AsyncImage
@@ -85,7 +87,11 @@ fun ImageViewer(
                     .align(Alignment.TopEnd)
                     .padding(12.dp),
             ) {
-                Icon(Icons.Filled.Close, contentDescription = "关闭", tint = Color.White)
+                Icon(
+                    Icons.Filled.Close,
+                    contentDescription = stringResource(R.string.action_close),
+                    tint = Color.White,
+                )
             }
         }
     }

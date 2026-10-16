@@ -34,6 +34,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
@@ -52,6 +53,8 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.zIndex
 import androidx.core.content.FileProvider
@@ -89,12 +92,19 @@ fun ImageEditScreen(recipeId: Long, onDone: () -> Unit) {
     val maxImages = MAX_IMAGES
     val pagerState = rememberPagerState { images.size.coerceAtLeast(1) }
     val failedMessage = stringResource(R.string.image_import_failed)
+    val fullMessage = stringResource(R.string.image_full)
 
     suspend fun reload() {
         images = repository.images(recipeId)
     }
 
     LaunchedEffect(recipeId) { reload() }
+
+    // 上次拍照留下的临时文件（等回调的时候离开了页面，launcher 跟着注销，就没机会删）
+    DisposableEffect(Unit) {
+        File(context.cacheDir, "camera").listFiles()?.forEach { it.delete() }
+        onDispose { pendingCameraFile?.delete() }
+    }
 
     // 删掉最后一张之后，页码要收回到有效范围
     LaunchedEffect(images.size) {
@@ -109,7 +119,11 @@ fun ImageEditScreen(recipeId: Long, onDone: () -> Unit) {
             return
         }
         scope.launch {
-            repository.addImage(recipeId, imported)
+            if (repository.addImage(recipeId, imported) == null) {
+                // 到上限了：文件已经落盘，得自己收
+                ImageStore.deleteFiles(container.filesDir, imported.path, imported.thumbPath)
+                message = fullMessage
+            }
             reload()
         }
     }
@@ -411,11 +425,15 @@ private fun ThumbnailStrip(
                     modifier = Modifier.fillMaxSize().clip(RoundedCornerShape(6.dp)),
                 )
                 if (image.isCover) {
+                    val coverLabel = stringResource(R.string.image_cover_badge)
                     Text(
                         text = "★",
                         color = Color.White,
                         style = MaterialTheme.typography.labelSmall,
-                        modifier = Modifier.align(Alignment.TopEnd).padding(1.dp),
+                        modifier = Modifier
+                            .align(Alignment.TopEnd)
+                            .padding(1.dp)
+                            .semantics { contentDescription = coverLabel },
                     )
                 }
             }

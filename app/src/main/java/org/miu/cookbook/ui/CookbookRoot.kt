@@ -1,6 +1,7 @@
 package org.miu.cookbook.ui
 
 import androidx.annotation.StringRes
+import androidx.compose.animation.Crossfade
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
@@ -43,6 +44,7 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.navigation.NavBackStackEntry
 import androidx.navigation.NavGraph.Companion.findStartDestination
 import androidx.navigation.NavType
 import androidx.navigation.compose.NavHost
@@ -133,8 +135,6 @@ fun CookbookRoot(
     val routeRecipeId = backStackEntry?.arguments?.getLong(ARG_RECIPE_ID) ?: 0L
     val detailState = remember(routeRecipeId) { RecipeDetailState() }
 
-    // 子编辑器（原料 / 做法备注）把「取消 / 完成」挂到这里，由常驻顶栏来画
-
     // 顶栏**常驻**：进详情页时不再整条消失（那样切换时闪一下很突兀），
     // 只是把标题换成当前页面、把汉堡换成返回箭头。
     val sectionName = backStackEntry?.arguments?.getString(ARG_CONTENT_SECTION)
@@ -222,64 +222,62 @@ fun CookbookRoot(
                 }
             },
             topBar = {
-                run {
-                    TopAppBar(
-                        title = { Text(topTitle) },
-                        navigationIcon = {
-                            if (mainDestination != null) {
-                                IconButton(onClick = { scope.launch { drawerState.open() } }) {
-                                    Icon(
-                                        imageVector = Icons.Filled.Menu,
-                                        contentDescription = stringResource(R.string.drawer_open),
-                                    )
-                                }
-                            } else {
-                                IconButton(onClick = {
-                                    // 从只读详情点进编辑态时，返回箭头先退出编辑态；
-                                    // 本来就是从列表的「编辑食谱」进来的，返回就直接回列表
-                                    if (route == ROUTE_RECIPE_DETAIL &&
-                                        detailState.editing &&
-                                        !detailState.enteredAsEditor
-                                    ) {
-                                        detailState.editing = false
-                                    } else {
-                                        navController.popBackStack()
-                                    }
-                                }) {
-                                    Icon(
-                                        imageVector = Icons.AutoMirrored.Filled.ArrowBack,
-                                        contentDescription = stringResource(R.string.action_back),
-                                    )
-                                }
-                            }
-                        },
-                        actions = {
-                            when {
-                                mainDestination != null -> BackupMenu(
-                                    repository = container.repository,
-                                    onMessage = { message -> messenger.show(message) },
-                                    onStartSelection = { selectionRequested = true },
+                TopAppBar(
+                    title = { Crossfade(targetState = topTitle, label = "top-title") { Text(it) } },
+                    navigationIcon = {
+                        if (mainDestination != null) {
+                            IconButton(onClick = { scope.launch { drawerState.open() } }) {
+                                Icon(
+                                    imageVector = Icons.Filled.Menu,
+                                    contentDescription = stringResource(R.string.drawer_open),
                                 )
-
-                                // 只读时才有 Markdown 和铅笔；编辑态是即时落盘的，顶栏不留按钮
-                                route == ROUTE_RECIPE_DETAIL -> if (!detailState.editing &&
-                                    detailState.available
-                                ) {
-                                    TextButton(onClick = { detailState.markdownVisible = true }) {
-                                        Text(stringResource(R.string.recipe_view_markdown))
-                                    }
-                                    IconButton(onClick = { detailState.editing = true }) {
-                                        Icon(
-                                            imageVector = Icons.Filled.Edit,
-                                            contentDescription = stringResource(R.string.recipe_edit_title),
-                                        )
-                                    }
-                                }
-
                             }
-                        },
-                    )
-                }
+                        } else {
+                            IconButton(onClick = {
+                                // 从只读详情点进编辑态时，返回箭头先退出编辑态；
+                                // 本来就是从列表的「编辑食谱」进来的，返回就直接回列表
+                                if (route == ROUTE_RECIPE_DETAIL &&
+                                    detailState.editing &&
+                                    !detailState.enteredAsEditor
+                                ) {
+                                    detailState.editing = false
+                                } else {
+                                    navController.popBackStack()
+                                }
+                            }) {
+                                Icon(
+                                    imageVector = Icons.AutoMirrored.Filled.ArrowBack,
+                                    contentDescription = stringResource(R.string.action_back),
+                                )
+                            }
+                        }
+                    },
+                    actions = {
+                        when {
+                            mainDestination != null -> BackupMenu(
+                                repository = container.repository,
+                                onMessage = { message -> messenger.show(message) },
+                                onStartSelection = { selectionRequested = true },
+                            )
+
+                            // 只读时才有 Markdown 和铅笔；编辑态是即时落盘的，顶栏不留按钮
+                            route == ROUTE_RECIPE_DETAIL -> if (!detailState.editing &&
+                                detailState.available
+                            ) {
+                                TextButton(onClick = { detailState.markdownVisible = true }) {
+                                    Text(stringResource(R.string.recipe_view_markdown))
+                                }
+                                IconButton(onClick = { detailState.editing = true }) {
+                                    Icon(
+                                        imageVector = Icons.Filled.Edit,
+                                        contentDescription = stringResource(R.string.recipe_edit_title),
+                                    )
+                                }
+                            }
+
+                        }
+                    },
+                )
             },
             floatingActionButton = {
                 if (route == MainDestination.Recipes.route) {
@@ -332,7 +330,7 @@ fun CookbookRoot(
                         },
                     ),
                 ) { entry ->
-                    val recipeId = entry.arguments?.getLong(ARG_RECIPE_ID) ?: return@composable
+                    val recipeId = entry.recipeIdOrNull() ?: return@composable
                     val startEditing = entry.arguments?.getBoolean(ARG_RECIPE_EDIT) ?: false
                     RecipeDetailScreen(
                         recipeId = recipeId,
@@ -347,14 +345,14 @@ fun CookbookRoot(
                     route = ROUTE_INGREDIENT_EDIT,
                     arguments = listOf(navArgument(ARG_RECIPE_ID) { type = NavType.LongType }),
                 ) { entry ->
-                    val recipeId = entry.arguments?.getLong(ARG_RECIPE_ID) ?: return@composable
+                    val recipeId = entry.recipeIdOrNull() ?: return@composable
                     IngredientEditScreen(recipeId = recipeId)
                 }
                 composable(
                     route = ROUTE_IMAGE_EDIT,
                     arguments = listOf(navArgument(ARG_RECIPE_ID) { type = NavType.LongType }),
                 ) { entry ->
-                    val recipeId = entry.arguments?.getLong(ARG_RECIPE_ID) ?: return@composable
+                    val recipeId = entry.recipeIdOrNull() ?: return@composable
                     ImageEditScreen(
                         recipeId = recipeId,
                         onDone = { navController.popBackStack() },
@@ -367,7 +365,7 @@ fun CookbookRoot(
                         navArgument(ARG_CONTENT_SECTION) { type = NavType.StringType },
                     ),
                 ) { entry ->
-                    val recipeId = entry.arguments?.getLong(ARG_RECIPE_ID) ?: return@composable
+                    val recipeId = entry.recipeIdOrNull() ?: return@composable
                     val name = entry.arguments?.getString(ARG_CONTENT_SECTION)
                     val section = ContentSection.entries.firstOrNull { it.name == name }
                         ?: return@composable
@@ -378,3 +376,6 @@ fun CookbookRoot(
     }
     }
 }
+
+/** 详情、原料、图片、正文这几个路由都带同一个 `recipeId` 参数，取法统一放这里。 */
+private fun NavBackStackEntry.recipeIdOrNull(): Long? = arguments?.getLong(ARG_RECIPE_ID)

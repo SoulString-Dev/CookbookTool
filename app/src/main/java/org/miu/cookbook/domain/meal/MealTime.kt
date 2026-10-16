@@ -9,12 +9,6 @@ enum class MealSlot(val label: String, val shortLabel: String) {
     BREAKFAST("早餐", "早"),
     LUNCH("午餐", "午"),
     DINNER("晚餐", "晚"),
-    ;
-
-    companion object {
-        /** 由序号取餐段，越界时夹到合法范围。 */
-        fun ofOrdinal(value: Int): MealSlot = entries[value.coerceIn(entries.indices)]
-    }
 }
 
 /** 一次饮食发生的“时间点”：精确到某一天的某一餐。 */

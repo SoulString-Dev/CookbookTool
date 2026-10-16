@@ -11,6 +11,8 @@ import kotlinx.coroutines.runBlocking
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotEquals
+import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
@@ -22,9 +24,16 @@ import org.miu.cookbook.data.db.ContentSection
 import org.miu.cookbook.data.db.MealLogEntity
 import org.miu.cookbook.data.db.MealLogRow
 import org.miu.cookbook.data.image.ImportedImage
+import org.miu.cookbook.data.backup.BackupArchive
+import org.miu.cookbook.domain.backup.BackupCodec
+import org.miu.cookbook.domain.backup.BackupFile
+import org.miu.cookbook.domain.backup.BackupImage
+import org.miu.cookbook.domain.backup.BackupMealLog
+import org.miu.cookbook.domain.backup.BackupRecipe
 import org.miu.cookbook.domain.meal.MealSlot
 import org.miu.cookbook.domain.recipe.ContentLine
 import org.miu.cookbook.domain.recipe.IngredientLine
+import org.miu.cookbook.domain.recipe.MAX_RECIPE_IMAGES
 import org.miu.cookbook.ui.recipes.contentLines
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
@@ -237,8 +246,8 @@ class CookbookRepositoryTest {
     fun `第一张图自动成为列表封面`() {
         val recipe = runBlocking { repository.createRecipe("番茄炒蛋") }
 
-        val first = runBlocking { repository.addImage(recipe, imported("a")) }
-        val second = runBlocking { repository.addImage(recipe, imported("b")) }
+        val first = runBlocking { repository.addImage(recipe, imported("a")) }!!
+        val second = runBlocking { repository.addImage(recipe, imported("b")) }!!
 
         val images = runBlocking { repository.images(recipe) }
         assertEquals(listOf("images/a.jpg", "images/b.jpg"), images.map { it.path })
@@ -589,6 +598,112 @@ class CookbookRepositoryTest {
 
         assertEquals(before, repository.recipeList.first().size)
     }
+
+    // ---------- 审查后的加固 ----------
+
+    @Test
+    fun `删除食谱会把磁盘上的图片一起删掉`() = runBlocking {
+        val recipeId = repository.createRecipe("带图")
+        File(baseDir, "images").mkdirs()
+        File(baseDir, "thumbs").mkdirs()
+        File(baseDir, "images/gone.jpg").writeBytes(byteArrayOf(1))
+        File(baseDir, "thumbs/gone.jpg").writeBytes(byteArrayOf(2))
+        repository.addImage(recipeId, imported("gone"))
+
+        repository.deleteRecipes(listOf(recipeId))
+
+        assertFalse(File(baseDir, "images/gone.jpg").isFile)
+        assertFalse(File(baseDir, "thumbs/gone.jpg").isFile)
+    }
+
+    @Test
+    fun `图片张数到了上限就挂不上去`() = runBlocking {
+        val recipeId = repository.createRecipe("图多")
+        repeat(MAX_RECIPE_IMAGES) { index ->
+            assertNotNull(repository.addImage(recipeId, imported("limit$index")))
+        }
+
+        assertNull(repository.addImage(recipeId, imported("overflow")))
+        assertEquals(MAX_RECIPE_IMAGES, repository.images(recipeId).size)
+    }
+
+    @Test
+    fun `备份里越界的图片路径会被丢掉`() = runBlocking {
+        val recipeId = repository.createRecipe("路径不对")
+        val backup = BackupFile.create(
+            recipes = listOf(
+                BackupRecipe(
+                    id = recipeId,
+                    title = "路径不对",
+                    createdAt = 1,
+                    updatedAt = 1,
+                    images = listOf(
+                        BackupImage(
+                            file = "/data/data/org.miu.cookbook/evil.jpg",
+                            thumbFile = "thumbs/evil.jpg",
+                            width = 1,
+                            height = 1,
+                            sortOrder = 0,
+                            isCover = true,
+                        ),
+                        BackupImage(
+                            file = "images/../../evil.jpg",
+                            thumbFile = "thumbs/evil.jpg",
+                            width = 1,
+                            height = 1,
+                            sortOrder = 1,
+                            isCover = false,
+                        ),
+                    ),
+                ),
+            ),
+        )
+
+        repository.importBackup(ByteArrayInputStream(zipOf(backup)))
+
+        assertTrue(repository.images(recipeId).isEmpty())
+    }
+
+    @Test
+    fun `备份里越界的日期会被丢掉`() = runBlocking {
+        val recipeId = repository.createRecipe("日期不对")
+        val backup = BackupFile.create(
+            recipes = listOf(
+                BackupRecipe(id = recipeId, title = "日期不对", createdAt = 1, updatedAt = 1),
+            ),
+            mealLogs = listOf(
+                BackupMealLog(recipeId = recipeId, epochDay = Long.MIN_VALUE, slot = MealSlot.DINNER.name, createdAt = 1),
+                BackupMealLog(recipeId = recipeId, epochDay = 9_999_999, slot = MealSlot.LUNCH.name, createdAt = 1),
+                BackupMealLog(recipeId = recipeId, epochDay = day(0), slot = MealSlot.BREAKFAST.name, createdAt = 1),
+            ),
+        )
+
+        repository.importBackup(ByteArrayInputStream(zipOf(backup)))
+
+        assertEquals(listOf(MealSlot.BREAKFAST), history().map { it.slot })
+    }
+
+    @Test
+    fun `原料的空行不会让顺序跳号`() = runBlocking {
+        val recipeId = repository.createRecipe("顺序")
+        repository.setIngredients(
+            recipeId,
+            listOf(
+                IngredientLine("鸡蛋", "2", "个"),
+                IngredientLine(),
+                IngredientLine("番茄", "3", "个"),
+            ),
+        )
+
+        assertEquals(
+            listOf("鸡蛋" to 0, "番茄" to 1),
+            detailOf(recipeId).ingredients.map { it.name to it.sortOrder },
+        )
+    }
+
+    /** 交给 importBackup 的必须是 zip（和界面导出的格式一致），不是裸 JSON。 */
+    private fun zipOf(backup: BackupFile): ByteArray =
+        ByteArrayOutputStream().also { BackupArchive.write(backup, baseDir, it) }.toByteArray()
 
     private fun imported(name: String) = ImportedImage(
         path = "images/$name.jpg",

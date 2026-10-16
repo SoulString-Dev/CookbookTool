@@ -97,16 +97,13 @@ fun RecipeListScreen(
     var selectedIds by remember { mutableStateOf(emptySet<Long>()) }
     var deleteTargets by remember { mutableStateOf<List<Long>?>(null) }
     var categoryTargets by remember { mutableStateOf<List<Long>?>(null) }
-    var showNewRecipe by remember { mutableStateOf(false) }
+    var newRecipeRequest by remember { mutableStateOf<NewRecipeRequest?>(null) }
 
     // 记录模式：50% 黑蒙版 + 顶上一条搜索栏，点候选食谱弹「记下这一顿」
     var recording by remember { mutableStateOf(false) }
     var recordQuery by remember { mutableStateOf("") }
     var recordTarget by remember { mutableStateOf<Pair<Long, String>?>(null) }
     var recordTargetAllowSkip by remember { mutableStateOf(false) }
-    /** 新建食谱时是不是从记录模式进来的（建完要接着弹确认记录）。 */
-    var recordAfterCreate by remember { mutableStateOf(false) }
-    var showNewRecipeInRecord by remember { mutableStateOf(false) }
 
     val visible = remember(allItems, query) { FuzzySearch.rank(allItems, query) { it.searchDocument } }
 
@@ -114,8 +111,10 @@ fun RecipeListScreen(
     LaunchedEffect(newRecipeRequested) {
         if (newRecipeRequested) {
             // 记录模式下再按加号 = 先新增食谱，然后接着确认记录
-            recordAfterCreate = recording
-            showNewRecipe = true
+            newRecipeRequest = NewRecipeRequest(
+                initialTitle = if (recording) recordQuery else query,
+                thenRecord = recording,
+            )
             onNewRecipeHandled()
         }
     }
@@ -249,50 +248,28 @@ fun RecipeListScreen(
                     recordTargetAllowSkip = false
                     recordTarget = item.id to item.title
                 },
-                onAddRecipe = { showNewRecipeInRecord = true },
+                onAddRecipe = { newRecipeRequest = NewRecipeRequest(recordQuery, thenRecord = true) },
                 modifier = Modifier.align(Alignment.TopCenter),
             )
         }
     }
 
-    if (showNewRecipe) {
+    // 一个入口：搜索栏（记录模式下是记录面板的搜索框）里有字就拿它当菜名，省得再打一遍。
+    // 从记录模式进来的，建完接着问「记下这一顿」，也可以只保存不记录。
+    newRecipeRequest?.let { request ->
         NewRecipeDialog(
-            // 搜索栏（记录模式下是记录面板的搜索框）里有字就拿它当菜名，省得再打一遍
-            initialTitle = if (recordAfterCreate) recordQuery else query,
-            onDismiss = {
-                showNewRecipe = false
-                showNewRecipeInRecord = false
-                recordAfterCreate = false
-            },
+            initialTitle = request.initialTitle,
+            onDismiss = { newRecipeRequest = null },
             onCreate = { title ->
-                showNewRecipe = false
-                showNewRecipeInRecord = false
-                val keepRecording = recordAfterCreate
-                recordAfterCreate = false
+                newRecipeRequest = null
                 scope.launch {
                     val newId = repository.createRecipe(title)
-                    if (keepRecording) {
-                        // 新增完接着问要不要记这一顿；也可以只保存不记录
+                    if (request.thenRecord) {
                         recordTargetAllowSkip = true
                         recordTarget = newId to title
                     } else {
                         onOpenRecipe(newId)
                     }
-                }
-            },
-        )
-    }
-
-    if (showNewRecipeInRecord) {
-        NewRecipeDialog(
-            initialTitle = recordQuery,
-            onDismiss = { showNewRecipeInRecord = false },
-            onCreate = { title ->
-                showNewRecipeInRecord = false
-                scope.launch {
-                    val newId = repository.createRecipe(title)
-                    recordTargetAllowSkip = true
-                    recordTarget = newId to title
                 }
             },
         )
@@ -339,7 +316,6 @@ fun RecipeListScreen(
     categoryTargets?.let { ids ->
         CategoryPickerDialog(
             recipeIds = ids,
-            repository = repository,
             onDismiss = { categoryTargets = null },
             onApplied = { categoryTargets = null },
         )
@@ -347,6 +323,14 @@ fun RecipeListScreen(
 }
 
 private fun Set<Long>.toggle(id: Long): Set<Long> = if (id in this) this - id else this + id
+
+/**
+ * 「新建食谱」弹窗的一次请求。
+ *
+ * [initialTitle] 是搜索栏里已经打了一半的名字（记录模式下用记录面板的搜索框）；
+ * [thenRecord] 表示建完要接着问「记下这一顿」——记录模式里按加号进来的都是这种。
+ */
+private data class NewRecipeRequest(val initialTitle: String, val thenRecord: Boolean)
 
 /** 浮在列表上方的搜索栏。多选入口已经收进顶栏的「⋮」菜单，这里只剩搜索。 */
 @Composable

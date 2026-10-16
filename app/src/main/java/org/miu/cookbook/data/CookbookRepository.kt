@@ -39,6 +39,7 @@ import org.miu.cookbook.domain.meal.MealSlot
 import org.miu.cookbook.domain.recipe.ContentLine
 import org.miu.cookbook.domain.recipe.ContentOutline
 import org.miu.cookbook.domain.recipe.IngredientLine
+import org.miu.cookbook.domain.recipe.MAX_RECIPE_IMAGES
 
 /**
  * 界面唯一的数据入口。读直接透传 Room 的 Flow，写统一走 IO 线程。
@@ -86,14 +87,18 @@ class CookbookRepository(
     suspend fun renameRecipe(id: Long, title: String) = io {
         val trimmed = title.trim()
         if (trimmed.isEmpty()) return@io
-        val existing = recipeDao.findById(id) ?: return@io
-        if (existing.title == trimmed) return@io
-        recipeDao.update(existing.copy(title = trimmed, updatedAt = System.currentTimeMillis()))
+        recipeDao.updateTitle(id, trimmed, System.currentTimeMillis())
     }
 
-    /** 批量删除食谱。饮食历史由外键 CASCADE 一并删除。 */
+    /**
+     * 批量删除食谱。饮食历史由外键 CASCADE 一并删除，
+     * 但磁盘上的图片文件不在数据库里，得自己收——只删行的话图会永久堆在私有目录里。
+     */
     suspend fun deleteRecipes(ids: List<Long>) = io {
-        if (ids.isNotEmpty()) recipeDao.deleteByIds(ids)
+        if (ids.isEmpty()) return@io
+        val images = ids.flatMap { imageDao.listFor(it) }
+        recipeDao.deleteByIds(ids)
+        images.forEach { ImageStore.deleteFiles(baseDir, it.path, it.thumbPath) }
     }
 
     /** 这些食谱下共有多少条饮食记录，用于删除前的提示。 */
@@ -153,18 +158,15 @@ class CookbookRepository(
      * 行数就几十，整份换掉最不容易写出错，还顺手把 sort_order 重排成 0..n。
      */
     suspend fun setIngredients(recipeId: Long, lines: List<IngredientLine>) = io {
-        val items = lines.mapIndexedNotNull { index, line ->
-            if (line.isBlank) {
-                null
-            } else {
-                IngredientEntity(
-                    recipeId = recipeId,
-                    name = line.name.trim(),
-                    amount = line.amount.trim(),
-                    unit = line.unit.trim(),
-                    sortOrder = index,
-                )
-            }
+        // 先滤掉空行再编号，否则空行会让 sort_order 跳号（0、2、3…）
+        val items = lines.filterNot { it.isBlank }.mapIndexed { index, line ->
+            IngredientEntity(
+                recipeId = recipeId,
+                name = line.name.trim(),
+                amount = line.amount.trim(),
+                unit = line.unit.trim(),
+                sortOrder = index,
+            )
         }
         recipeDao.replaceIngredients(recipeId, items)
     }
@@ -190,9 +192,11 @@ class CookbookRepository(
 
     /** 把食谱的分类整体设成 [categoryIds]（多退少补）。 */
     suspend fun setCategories(recipeId: Long, categoryIds: Set<Long>) = io {
-        val existing = categoryDao.linkedCategoryIds(recipeId).toSet()
-        (existing - categoryIds).forEach { categoryDao.unlink(recipeId, it) }
-        (categoryIds - existing).forEach { categoryDao.link(RecipeCategoryCrossRef(recipeId, it)) }
+        database.withTransaction {
+            val existing = categoryDao.linkedCategoryIds(recipeId).toSet()
+            (existing - categoryIds).forEach { categoryDao.unlink(recipeId, it) }
+            (categoryIds - existing).forEach { categoryDao.link(RecipeCategoryCrossRef(recipeId, it)) }
+        }
     }
 
     /**
@@ -200,9 +204,11 @@ class CookbookRepository(
      * 批量场景下“没勾的就被删掉”太容易误伤，要去掉分类请改进单个食谱。
      */
     suspend fun addCategories(recipeIds: List<Long>, categoryIds: Set<Long>) = io {
-        recipeIds.forEach { recipeId ->
-            val existing = categoryDao.linkedCategoryIds(recipeId).toSet()
-            (categoryIds - existing).forEach { categoryDao.link(RecipeCategoryCrossRef(recipeId, it)) }
+        database.withTransaction {
+            recipeIds.forEach { recipeId ->
+                val existing = categoryDao.linkedCategoryIds(recipeId).toSet()
+                (categoryIds - existing).forEach { categoryDao.link(RecipeCategoryCrossRef(recipeId, it)) }
+            }
         }
     }
 
@@ -228,9 +234,13 @@ class CookbookRepository(
     /**
      * 把已经落盘的图片挂到食谱上，排到最后。
      * 这是这道菜的第一张图时，顺手把它设成列表封面。
+     *
+     * 超过 [MAX_RECIPE_IMAGES] 张时返回 null（调用方负责把已经写下的文件删掉）——
+     * 上限不能只靠界面上「隐藏加号」来保证，导入备份这条路也得挡住。
      */
-    suspend fun addImage(recipeId: Long, imported: ImportedImage): Long = io {
-        val isFirst = imageDao.countFor(recipeId) == 0
+    suspend fun addImage(recipeId: Long, imported: ImportedImage): Long? = io {
+        val count = imageDao.countFor(recipeId)
+        if (count >= MAX_RECIPE_IMAGES) return@io null
         val id = imageDao.insert(
             RecipeImageEntity(
                 recipeId = recipeId,
@@ -238,8 +248,8 @@ class CookbookRepository(
                 thumbPath = imported.thumbPath,
                 width = imported.width,
                 height = imported.height,
-                sortOrder = imageDao.countFor(recipeId),
-                isCover = isFirst,
+                sortOrder = count,
+                isCover = count == 0,
             ),
         )
         recipeDao.touch(recipeId, System.currentTimeMillis())
@@ -248,10 +258,12 @@ class CookbookRepository(
 
     /** 删图：先删库里的行，再删磁盘上的两个文件。 */
     suspend fun deleteImage(image: RecipeImageEntity) = io {
-        imageDao.deleteById(image.id)
+        database.withTransaction {
+            imageDao.deleteById(image.id)
+            renumberImages(image.recipeId, imageDao.listFor(image.recipeId))
+            recipeDao.touch(image.recipeId, System.currentTimeMillis())
+        }
         ImageStore.deleteFiles(baseDir, image.path, image.thumbPath)
-        renumberImages(image.recipeId, imageDao.listFor(image.recipeId))
-        recipeDao.touch(image.recipeId, System.currentTimeMillis())
     }
 
     /** 换顺序：把 [from] 位置的图挪到 [to]。 */
@@ -265,21 +277,25 @@ class CookbookRepository(
 
     /** 设为列表封面（一张图独占）。 */
     suspend fun setCover(recipeId: Long, imageId: Long) = io {
-        imageDao.clearCover(recipeId)
-        imageDao.markCover(imageId)
-        recipeDao.touch(recipeId, System.currentTimeMillis())
+        database.withTransaction {
+            imageDao.clearCover(recipeId)
+            imageDao.markCover(imageId)
+            recipeDao.touch(recipeId, System.currentTimeMillis())
+        }
     }
 
     /** 顺序重排成 0..n，顺便保证总有且只有一张封面。 */
     private suspend fun renumberImages(recipeId: Long, ordered: List<RecipeImageEntity>) {
-        ordered.forEachIndexed { index, image ->
-            if (image.sortOrder != index) imageDao.updateSortOrder(image.id, index)
-        }
-        if (ordered.isEmpty()) return
-        if (ordered.none { it.isCover }) {
-            val first = ordered.first()
-            imageDao.clearCover(recipeId)
-            imageDao.markCover(first.id)
+        database.withTransaction {
+            ordered.forEachIndexed { index, image ->
+                if (image.sortOrder != index) imageDao.updateSortOrder(image.id, index)
+            }
+            if (ordered.isEmpty()) return@withTransaction
+            if (ordered.none { it.isCover }) {
+                val first = ordered.first()
+                imageDao.clearCover(recipeId)
+                imageDao.markCover(first.id)
+            }
         }
     }
 
@@ -427,31 +443,38 @@ class CookbookRepository(
         imageDao.insertAll(
             backup.recipes.flatMap { recipe ->
                 recipe.images
-                    .filter { File(tmp, it.file).isFile }
+                    .asSequence()
+                    .filter { safeStoredPath(it.file) && File(tmp, it.file).isFile }
+                    .take(MAX_RECIPE_IMAGES)
                     .map {
                         RecipeImageEntity(
                             recipeId = recipe.id,
                             path = it.file,
-                            thumbPath = it.thumbFile,
+                            // 缩略图丢了就存空串，读的时候会回退到原图
+                            thumbPath = it.thumbFile.takeIf { thumb ->
+                                safeStoredPath(thumb) && File(tmp, thumb).isFile
+                            }.orEmpty(),
                             width = it.width,
                             height = it.height,
                             sortOrder = it.sortOrder,
                             isCover = it.isCover,
                         )
                     }
+                    .toList()
             },
         )
         mealLogDao.insertAllLogs(
-            backup.mealLogs.filter { it.recipeId in recipeIds }.mapNotNull { log ->
-                log.slot.toMealSlot()?.let {
-                    MealLogEntity(
-                        epochDay = log.epochDay,
-                        slot = it,
-                        recipeId = log.recipeId,
-                        createdAt = log.createdAt,
-                    )
-                }
-            },
+            backup.mealLogs.filter { it.recipeId in recipeIds && it.epochDay in 0..MAX_EPOCH_DAY }
+                .mapNotNull { log ->
+                    log.slot.toMealSlot()?.let {
+                        MealLogEntity(
+                            epochDay = log.epochDay,
+                            slot = it,
+                            recipeId = log.recipeId,
+                            createdAt = log.createdAt,
+                        )
+                    }
+                },
         )
         // 封面掉了一张（文件丢了）时兜回来：每道菜重排顺序并保证有封面
         backup.recipes.forEach { recipe ->
@@ -460,12 +483,40 @@ class CookbookRepository(
         }
     }
 
+    /**
+     * 把临时目录里的 images/ 和 thumbs/ 换到正式位置。
+     *
+     * 先把旧目录改名挪开、把新的 rename 进来，最后才删旧的。**不要**先
+     * `deleteRecursively()` 再 rename：rename 失败（磁盘满、目录被占用）时旧图已经没了、
+     * 新图还在临时目录里，紧接着调用方删掉临时目录，就只剩「库里有图、磁盘上没有」。
+     */
     private fun replaceImageDirs(tmp: File) {
         listOf(ImageStore.IMAGE_DIR, ImageStore.THUMB_DIR).forEach { name ->
-            File(baseDir, name).deleteRecursively()
+            val target = File(baseDir, name)
+            val stash = File(baseDir, "$name-old")
+            stash.deleteRecursively()
+            if (target.exists() && !target.renameTo(stash)) return@forEach
             val from = File(tmp, name)
-            if (from.isDirectory) from.renameTo(File(baseDir, name))
+            if (!from.isDirectory) {
+                stash.deleteRecursively()
+            } else if (from.renameTo(target)) {
+                stash.deleteRecursively()
+            } else {
+                stash.renameTo(target) // 换不过去就把旧的放回来，至少保住原来那一份
+            }
         }
+    }
+
+    /**
+     * 备份里记的图片路径必须老老实实落在 [baseDir] 里。
+     *
+     * `File(parent, child)` 在 child 以 `/` 开头时会**忽略 parent**，而 [ImageStore.deleteFiles]
+     * 是拿这些路径直接删文件的，所以一个手改过的备份能删到应用私有目录外面去。
+     */
+    private fun safeStoredPath(path: String): Boolean {
+        if (path.isBlank()) return false
+        if (path.startsWith("/") || path.startsWith("\\") || path.contains("..")) return false
+        return File(baseDir, path).canonicalPath.startsWith(baseDir.canonicalPath + File.separator)
     }
 
     private fun String.toContentSection(): ContentSection =
@@ -480,5 +531,8 @@ class CookbookRepository(
 
     private companion object {
         const val RESTORE_TMP_DIR = "restore-tmp"
+
+        /** 备份里的 epochDay 只接受这个范围（约到公元 4700 年），挡住乱写的值把日期算崩。 */
+        const val MAX_EPOCH_DAY = 1_000_000L
     }
 }

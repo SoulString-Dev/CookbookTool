@@ -119,9 +119,9 @@ object BackupCodec {
         val backup = try {
             json.decodeFromString<BackupFile>(text)
         } catch (e: Exception) {
-            throw IllegalArgumentException("这个文件不是菜谱本的备份", e)
+            throw IllegalArgumentException("这个文件不是食谱本的备份", e)
         }
-        require(backup.format == BackupFile.FORMAT) { "这个文件不是菜谱本的备份" }
+        require(backup.format == BackupFile.FORMAT) { "这个文件不是食谱本的备份" }
         require(backup.version <= BackupFile.VERSION) { "备份文件来自更新的版本，请先升级应用" }
         return backup
     }
