@@ -23,8 +23,10 @@ import androidx.compose.material3.ModalNavigationDrawer
 import androidx.compose.material3.NavigationDrawerItem
 import androidx.compose.material3.NavigationDrawerItemDefaults
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Snackbar
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
@@ -61,7 +63,6 @@ import org.miu.cookbook.ui.recipes.RecipeDetailScreen
 import org.miu.cookbook.ui.recipes.RecipeDetailState
 import org.miu.cookbook.ui.recipes.RecipeListScreen
 import org.miu.cookbook.ui.recipes.edit.ContentEditScreen
-import org.miu.cookbook.ui.recipes.edit.EditorTopBarActions
 import org.miu.cookbook.ui.recipes.edit.IngredientEditScreen
 import org.miu.cookbook.ui.theme.ThemeMode
 
@@ -133,7 +134,6 @@ fun CookbookRoot(
     val detailState = remember(routeRecipeId) { RecipeDetailState() }
 
     // 子编辑器（原料 / 做法备注）把「取消 / 完成」挂到这里，由常驻顶栏来画
-    val editorActions = remember(route) { EditorTopBarActions() }
 
     // 顶栏**常驻**：进详情页时不再整条消失（那样切换时闪一下很突兀），
     // 只是把标题换成当前页面、把汉堡换成返回箭头。
@@ -208,7 +208,19 @@ fun CookbookRoot(
         },
     ) {
         Scaffold(
-            snackbarHost = { SnackbarHost(snackbarHostState) },
+            snackbarHost = {
+                SnackbarHost(hostState = snackbarHostState) { data ->
+                    // 默认的 Snackbar 用 inverseSurface，日间是黑底、夜间是白底，跟应用反着来；
+                    // 这里改成跟界面同一套底色，四角也收圆一点
+                    Snackbar(
+                        snackbarData = data,
+                        shape = RoundedCornerShape(16.dp),
+                        containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
+                        contentColor = MaterialTheme.colorScheme.onSurface,
+                        actionColor = MaterialTheme.colorScheme.primary,
+                    )
+                }
+            },
             topBar = {
                 run {
                     TopAppBar(
@@ -264,18 +276,6 @@ fun CookbookRoot(
                                     }
                                 }
 
-                                route == ROUTE_INGREDIENT_EDIT || route == ROUTE_CONTENT_EDIT -> {
-                                    editorActions.cancel?.let { action ->
-                                        TextButton(onClick = action) {
-                                            Text(stringResource(R.string.action_cancel))
-                                        }
-                                    }
-                                    editorActions.done?.let { action ->
-                                        TextButton(onClick = action) {
-                                            Text(stringResource(R.string.action_done))
-                                        }
-                                    }
-                                }
                             }
                         },
                     )
@@ -348,12 +348,7 @@ fun CookbookRoot(
                     arguments = listOf(navArgument(ARG_RECIPE_ID) { type = NavType.LongType }),
                 ) { entry ->
                     val recipeId = entry.arguments?.getLong(ARG_RECIPE_ID) ?: return@composable
-                    IngredientEditScreen(
-                        recipeId = recipeId,
-                        onDone = { navController.popBackStack() },
-                        onCancel = { navController.popBackStack() },
-                        topBarActions = editorActions,
-                    )
+                    IngredientEditScreen(recipeId = recipeId)
                 }
                 composable(
                     route = ROUTE_IMAGE_EDIT,
@@ -376,13 +371,7 @@ fun CookbookRoot(
                     val name = entry.arguments?.getString(ARG_CONTENT_SECTION)
                     val section = ContentSection.entries.firstOrNull { it.name == name }
                         ?: return@composable
-                    ContentEditScreen(
-                        recipeId = recipeId,
-                        section = section,
-                        onDone = { navController.popBackStack() },
-                        onCancel = { navController.popBackStack() },
-                        topBarActions = editorActions,
-                    )
+                    ContentEditScreen(recipeId = recipeId, section = section)
                 }
             }
         }

@@ -16,13 +16,12 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
@@ -44,6 +43,9 @@ import kotlinx.coroutines.launch
 import org.miu.cookbook.R
 import org.miu.cookbook.data.db.ContentSection
 import org.miu.cookbook.di.LocalAppContainer
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import org.miu.cookbook.domain.recipe.ContentLine
 import org.miu.cookbook.domain.recipe.ContentOutline
 import org.miu.cookbook.ui.recipes.MdBodyStyle
@@ -64,6 +66,9 @@ private data class LineDraft(
     fun asLine() = ContentLine(text = text, level = level, isHeading = isHeading)
 }
 
+/** 停手多久之后落盘。 */
+private const val AutoSaveDelayMillis = 400L
+
 private fun blankDraft(level: Int = 0, isHeading: Boolean = false) =
     LineDraft(value = TextFieldValue(""), level = level, isHeading = isHeading)
 
@@ -80,18 +85,38 @@ private fun blankDraft(level: Int = 0, isHeading: Boolean = false) =
 fun ContentEditScreen(
     recipeId: Long,
     section: ContentSection,
-    onDone: () -> Unit,
-    onCancel: () -> Unit,
-    topBarActions: EditorTopBarActions = remember { EditorTopBarActions() },
 ) {
-    val repository = LocalAppContainer.current.repository
+    val container = LocalAppContainer.current
+    val repository = container.repository
     val detailFlow = remember(recipeId) { repository.recipeDetail(recipeId) }
     val detail by detailFlow.collectAsStateWithLifecycle(initialValue = null)
     val drafts = remember { mutableStateListOf<LineDraft>() }
     val requesters = remember { mutableStateListOf<FocusRequester>() }
     var loaded by remember { mutableStateOf(false) }
     var pendingFocus by remember { mutableStateOf<Int?>(null) }
-    val scope = rememberCoroutineScope()
+    var saveJob by remember { mutableStateOf<Job?>(null) }
+    var latestLines by remember { mutableStateOf<List<ContentLine>>(emptyList()) }
+
+    // 一边编一边落盘：停手 400ms 写一次，退出页面时把最后没来得及写的那一下补上
+    fun scheduleSave() {
+        val snapshot = drafts.map { it.asLine() }
+        latestLines = snapshot
+        saveJob?.cancel()
+        saveJob = container.appScope.launch {
+            delay(AutoSaveDelayMillis)
+            repository.setContent(recipeId, section, snapshot)
+        }
+    }
+
+    DisposableEffect(Unit) {
+        onDispose {
+            saveJob?.cancel()
+            val snapshot = latestLines
+            if (snapshot.isNotEmpty()) {
+                container.appScope.launch { repository.setContent(recipeId, section, snapshot) }
+            }
+        }
+    }
 
     LaunchedEffect(detail) {
         val loadedDetail = detail
@@ -124,11 +149,13 @@ fun ContentEditScreen(
         drafts.add(index + 1, blankDraft(level = drafts[index].level))
         requesters.add(index + 1, FocusRequester())
         pendingFocus = index + 1
+        scheduleSave()
     }
 
     fun deleteLine(index: Int) {
         if (drafts.size <= 1) {
             drafts[0] = blankDraft()
+            scheduleSave()
             return
         }
         drafts.removeAt(index)
@@ -137,17 +164,7 @@ fun ContentEditScreen(
         val previous = drafts[target]
         drafts[target] = previous.copy(value = previous.value.copy(selection = TextRange(previous.text.length)))
         pendingFocus = target
-    }
-
-    // 顶栏常驻，取消 / 完成由它画
-    SideEffect {
-        topBarActions.cancel = onCancel
-        topBarActions.done = {
-            scope.launch {
-                repository.setContent(recipeId, section, drafts.map { it.asLine() })
-                onDone()
-            }
-        }
+        scheduleSave()
     }
 
     Column(Modifier.fillMaxSize()) {
@@ -216,6 +233,7 @@ fun ContentEditScreen(
                             else -> current.copy(value = new)
                         }
                         drafts[index] = updated
+                        scheduleSave()
                     },
                     // 必须带颜色：BasicTextField 拿到没写颜色的样式会退回黑色，夜间模式就看不见了
                     textStyle = if (draft.isHeading) {
@@ -243,8 +261,16 @@ fun ContentEditScreen(
                                     draft.value.selection.start == 0 &&
                                     draft.value.selection.end == 0 -> {
                                     when {
-                                        draft.isHeading -> drafts[index] = draft.copy(isHeading = false)
-                                        draft.level > 0 -> drafts[index] = draft.copy(level = draft.level - 1)
+                                        draft.isHeading -> {
+                                            drafts[index] = draft.copy(isHeading = false)
+                                            scheduleSave()
+                                        }
+
+                                        draft.level > 0 -> {
+                                            drafts[index] = draft.copy(level = draft.level - 1)
+                                            scheduleSave()
+                                        }
+
                                         else -> deleteLine(index)
                                     }
                                     true

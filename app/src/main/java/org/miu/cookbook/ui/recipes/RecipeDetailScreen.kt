@@ -294,15 +294,8 @@ fun RecipeDetailScreen(
             if (editing) {
                 Spacer(Modifier.height(8.dp))
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    Icon(
-                        imageVector = Icons.AutoMirrored.Filled.List,
-                        contentDescription = null,
-                        tint = MaterialTheme.colorScheme.primary,
-                        modifier = Modifier.size(20.dp),
-                    )
-                    Spacer(Modifier.width(6.dp))
                     Text(
-                        text = stringResource(R.string.recipe_edit_categories),
+                        text = stringResource(R.string.section_categories),
                         style = Mdh2Style(),
                     )
                     Spacer(Modifier.weight(1f))

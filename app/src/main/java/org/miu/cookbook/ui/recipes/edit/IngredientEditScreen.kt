@@ -21,6 +21,10 @@ import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.ExposedDropdownMenuBox
+import androidx.compose.material3.ExposedDropdownMenuDefaults
+import androidx.compose.material3.MenuAnchorType
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
@@ -28,13 +32,12 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -49,11 +52,17 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import kotlinx.coroutines.launch
 import org.miu.cookbook.R
 import org.miu.cookbook.di.LocalAppContainer
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import org.miu.cookbook.domain.recipe.IngredientLine
 import org.miu.cookbook.domain.recipe.Units
 import kotlin.math.roundToInt
 
 private val RowHeight = 76.dp
+
+/** 停手多久之后落盘（和正文编辑器同一个节奏）。 */
+private const val AutoSaveDelayMillis = 400L
 
 /**
  * 原料编辑：一行三格（名字 / 数量 / 量词），按住左边的把手上下拖就能换顺序。
@@ -63,16 +72,36 @@ private val RowHeight = 76.dp
 @Composable
 fun IngredientEditScreen(
     recipeId: Long,
-    onDone: () -> Unit,
-    onCancel: () -> Unit,
-    topBarActions: EditorTopBarActions = remember { EditorTopBarActions() },
 ) {
-    val repository = LocalAppContainer.current.repository
+    val container = LocalAppContainer.current
+    val repository = container.repository
     val detailFlow = remember(recipeId) { repository.recipeDetail(recipeId) }
     val detail by detailFlow.collectAsStateWithLifecycle(initialValue = null)
     val lines = remember { mutableStateListOf<IngredientLine>() }
     var loaded by remember { mutableStateOf(false) }
-    val scope = rememberCoroutineScope()
+    var saveJob by remember { mutableStateOf<Job?>(null) }
+    var latestLines by remember { mutableStateOf<List<IngredientLine>>(emptyList()) }
+
+    // 一边编一边落盘：停手 400ms 写一次，退出页面时把最后没来得及写的那一下补上
+    fun scheduleSave() {
+        val snapshot = lines.toList()
+        latestLines = snapshot
+        saveJob?.cancel()
+        saveJob = container.appScope.launch {
+            delay(AutoSaveDelayMillis)
+            repository.setIngredients(recipeId, snapshot)
+        }
+    }
+
+    DisposableEffect(Unit) {
+        onDispose {
+            saveJob?.cancel()
+            val snapshot = latestLines
+            if (snapshot.isNotEmpty()) {
+                container.appScope.launch { repository.setIngredients(recipeId, snapshot) }
+            }
+        }
+    }
 
     LaunchedEffect(detail) {
         val loadedDetail = detail
@@ -81,17 +110,6 @@ fun IngredientEditScreen(
                 .map { IngredientLine(name = it.name, amount = it.amount, unit = it.unit) })
             if (lines.isEmpty()) lines.add(IngredientLine())
             loaded = true
-        }
-    }
-
-    // 顶栏是常驻的，取消 / 完成由它来画，这里只把两个动作挂上去
-    SideEffect {
-        topBarActions.cancel = onCancel
-        topBarActions.done = {
-            scope.launch {
-                repository.setIngredients(recipeId, lines.toList())
-                onDone()
-            }
         }
     }
 
@@ -113,7 +131,12 @@ fun IngredientEditScreen(
 
             DragList(
                 lines = lines,
-                onMove = { from, to -> lines.add(to, lines.removeAt(from)) },
+                onMove = {
+                    from, to ->
+                    lines.add(to, lines.removeAt(from))
+                    scheduleSave()
+                },
+                onEdited = { scheduleSave() },
             )
         }
     }
@@ -124,6 +147,7 @@ fun IngredientEditScreen(
 private fun DragList(
     lines: MutableList<IngredientLine>,
     onMove: (from: Int, to: Int) -> Unit,
+    onEdited: () -> Unit,
 ) {
     val rowHeightPx = with(LocalDensity.current) { RowHeight.toPx() }
     var draggingIndex by remember { mutableStateOf(-1) }
@@ -135,8 +159,14 @@ private fun DragList(
             IngredientRow(
                 line = line,
                 dragging = dragging,
-                onChange = { lines[index] = it },
-                onDelete = { lines.removeAt(index) },
+                onChange = {
+                    lines[index] = it
+                    onEdited()
+                },
+                onDelete = {
+                    lines.removeAt(index)
+                    onEdited()
+                },
                 dragHandleModifier = Modifier.pointerInput(index) {
                     detectDragGesturesAfterLongPress(
                         onDragStart = {
@@ -168,13 +198,17 @@ private fun DragList(
         }
     }
 
-    TextButton(onClick = { lines.add(IngredientLine()) }) {
+    TextButton(onClick = {
+        lines.add(IngredientLine())
+        onEdited()
+    }) {
         Icon(Icons.Filled.Add, contentDescription = null)
         Spacer(Modifier.width(6.dp))
         Text(stringResource(R.string.ingredient_add))
     }
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun IngredientRow(
     line: IngredientLine,
@@ -227,11 +261,26 @@ private fun IngredientRow(
 
             Spacer(Modifier.width(6.dp))
 
-            Box {
-                TextButton(onClick = { unitMenuOpen = true }, modifier = Modifier.width(64.dp)) {
-                    Text(if (line.unit.isEmpty()) "—" else line.unit)
-                }
-                DropdownMenu(expanded = unitMenuOpen, onDismissRequest = { unitMenuOpen = false }) {
+            // 做成正经的下拉框：一眼能看出这里能点、点开是可选量词
+            ExposedDropdownMenuBox(
+                expanded = unitMenuOpen,
+                onExpandedChange = { unitMenuOpen = it },
+                modifier = Modifier.width(96.dp),
+            ) {
+                OutlinedTextField(
+                    value = line.unit.ifEmpty { stringResource(R.string.ingredient_unit_none) },
+                    onValueChange = {},
+                    readOnly = true,
+                    singleLine = true,
+                    trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = unitMenuOpen) },
+                    modifier = Modifier
+                        .menuAnchor(MenuAnchorType.PrimaryNotEditable)
+                        .fillMaxWidth(),
+                )
+                ExposedDropdownMenu(
+                    expanded = unitMenuOpen,
+                    onDismissRequest = { unitMenuOpen = false },
+                ) {
                     Units.COMMON.forEach { unit ->
                         DropdownMenuItem(
                             text = { Text(unit.ifEmpty { stringResource(R.string.ingredient_unit_none) }) },
