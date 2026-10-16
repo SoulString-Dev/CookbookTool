@@ -38,6 +38,17 @@ bash scripts/build.sh test        # JVM 单测
 用 Android Studio 打开也可以，但需要本机有 JDK 17+ 与 Android SDK 35，
 并让 Gradle 能写 `$HOME`（或设 `GRADLE_USER_HOME`）。
 
+## 装到手机上
+
+```bash
+adb install -r app/build/outputs/apk/release/app-release.apk     # 正式包，包名 org.miu.cookbook
+adb install -r app/build/outputs/apk/debug/app-debug.apk         # 调试包，包名带 .debug，可与正式包并存
+```
+
+也可以把 APK 拷进手机点开安装（需要在系统里允许"安装未知来源应用"）。
+不需要任何权限：没有 INTERNET，也没有存储/相机权限（拍照走系统相机、选图走 Photo Picker）。
+数据全在应用私有目录里，卸载即丢——所以换机前记得先用顶栏「⋮」导出备份。
+
 ## 数据模型要点
 
 - `recipe` — 菜名、创建/更新时间（H1 菜名不存进正文，只在序列化时生成）
@@ -125,6 +136,18 @@ thumbs/ab12.jpg        缩略图
   备份文件可能是手改过的。zip 条目名会做目录穿越检查。
 
 主键 id 原样保留，所以食谱-分类-图片-饮食记录之间的引用关系不会错位。
+
+## 已知边界
+
+- **没有在真机/模拟器上跑过**：这台开发机没有 `/dev/kvm`，起不了模拟器。88 个 JVM 单测覆盖了
+  领域逻辑、Room 读写、备份 zip 和主要界面（Robolectric 里跑 Compose），但真机上的触摸、
+  系统相机、Photo Picker、SAF 这些都得装上去才知道。**侧边栏条目的点击在 Robolectric 里
+  不正常**（触摸会被抽屉蒙版吃掉，怀疑是测试环境的问题），真机上请顺手确认一下。
+- **R8 没开**（见上），正式包和调试包体积差不多。
+- 正文里的 Markdown 特殊字符（`#`、`-`、`|`）不做转义，导出成 Markdown 后原样呈现。
+- 备份导入是整库替换，不合并。
+- 需求里提过的两个未来扩展**都没做**：按上次吃的时间加权随机抽菜、食材清单与保质期提醒。
+  数据层已经留好了口子（`MealLogDao.lastCookedDays()` 返回每道菜最后一次被吃的天数）。
 
 ## 进度
 
