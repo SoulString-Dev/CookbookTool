@@ -53,7 +53,7 @@ adb install -r app/build/outputs/apk/debug/app-debug.apk         # 调试包，�
 
 - `recipe` — 菜名、创建/更新时间（H1 菜名不存进正文，只在序列化时生成）
 - `content_block` — 做法/备注的行，`section`（DIRECTIONS/NOTE）+ `kind`（有序列表项/三级标题）+ `level`（缩进层级）
-- `ingredient` — 原料名 + 食材数（文本，允许"适量"）+ 量词（可空）
+- `ingredient` — 原料名 + 食材数（文本，允许"适量"）+ 量词（可为空串）
 - `category` / `recipe_category` — 分类是 tag，多对多
 - `recipe_image` — 相对 `filesDir` 的路径 + 缩略图 + 顺序 + 是否列表封面
 - `meal_log` — `epoch_day` + 餐段（早/午/晚）+ 食谱；查"每道菜最后一次被吃"用于未来的加权随机
@@ -68,14 +68,21 @@ adb install -r app/build/outputs/apk/debug/app-debug.apk         # 调试包，�
 分类、原料也参与匹配但排在菜名后面。拼音表由 `scripts/gen_pinyin_table.py` 从 Unihan 生成，
 多音字（如"茄" jiā/qié）两个声母都认，所以 fqcd 和 fjcd 都搜得到。
 
-## 编辑行为的一处约定：正文只在保存时落地
+## 编辑行为的一处约定：全程即时落盘
 
-编辑原料、做法、备注时，界面自己攒一份草稿（`IngredientEditScreen` / `ContentEditScreen`），
-点「完成」才整份写回（`replaceIngredients` / `replaceContent`：先删后插，走一个事务）。
+菜名、分类、原料、做法、备注都是**边编边存**，没有「取消 / 完成」按钮：
+
+- 菜名停下来 400ms 写一次（`RecipeDetailScreen` 里的 `titleDirty` + 防抖 `Job`），退出编辑态时补写；
+- 原料和做法 / 备注两个子编辑器共用 `ui/recipes/edit/DebouncedSaver.kt` 的
+  `rememberDebouncedSaver`：停手 400ms 写一次，**离开页面时把最后没写的那一下补上**；
+- 补写挂在 `AppContainer.appScope`（活到进程结束）上——页面自己的 `rememberCoroutineScope`
+  会随页面销毁被取消，最后一下改动就丢了；
+- 分类勾一下就存。
+
+写回是整份替换（`replaceIngredients` / `replaceContent`：先删后插，走一个事务）。
 所以：
 
-- 拖动排序、行首空格缩进、句号转三级标题，全是对草稿里的小数据做确定性变换，不碰数据库；
-- 中途按返回 = 放弃改动，不会留下半截数据；
+- 拖动排序、行首空格缩进、句号转三级标题，全是对界面草稿里的小数据做确定性变换，不碰数据库；
 - 空行在存库前会被丢掉（结构化模型里它没有意义，Markdown 解析时也一样）。
 
 Markdown 的读写都在 `RecipeMarkdown` 里（`serialize` / `parse` 互为逆运算，有 round-trip 单测）。
