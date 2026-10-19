@@ -188,7 +188,7 @@
     <string name="settings_server_invalid">地址要以 http:// 或 https:// 开头</string>
     <string name="settings_pair_code_label">配对码</string>
     <string name="settings_pair_code_hint">六位数字</string>
-    <string name="settings_pair_code_where">配对码写在服务端数据目录的 pair-code.txt 里，每十分钟换一次</string>
+    <string name="settings_pair_code_where">配对码在服务端数据目录的 pair-code.txt 里，十分钟失效；服务端会自动换新的，过期了再 cat 一次</string>
     <string name="settings_device_name_label">这台设备的名字</string>
     <string name="settings_device_name_hint">同步记录里用它区分是哪台手机改的</string>
     <string name="settings_device_default">安卓手机</string>

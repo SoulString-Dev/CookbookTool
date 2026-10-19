@@ -44,7 +44,6 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.res.stringResource
-import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.navigation.NavBackStackEntry
 import androidx.navigation.NavGraph.Companion.findStartDestination
@@ -215,7 +214,9 @@ fun CookbookRoot(
                         modifier = Modifier.padding(NavigationDrawerItemDefaults.ItemPadding),
                     )
                 }
-                HorizontalDivider(Modifier.padding(horizontal = 28.dp, vertical = 8.dp))
+                Spacer(Modifier.weight(1f))
+                HorizontalDivider(Modifier.padding(horizontal = 28.dp))
+                // 设置放在最底下：它管的是整个应用的事（外观、家庭共享），跟上面两页不是一类
                 NavigationDrawerItem(
                     label = { Text(stringResource(R.string.settings_title)) },
                     icon = { Icon(Icons.Filled.Settings, contentDescription = null) },
@@ -226,23 +227,6 @@ fun CookbookRoot(
                     },
                     modifier = Modifier.padding(NavigationDrawerItemDefaults.ItemPadding),
                 )
-                Spacer(Modifier.weight(1f))
-                HorizontalDivider(Modifier.padding(horizontal = 28.dp))
-                Text(
-                    text = stringResource(R.string.theme_appearance),
-                    style = MaterialTheme.typography.labelMedium,
-                    fontWeight = FontWeight.Medium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.padding(start = 28.dp, top = 16.dp, bottom = 4.dp),
-                )
-                ThemeMode.entries.forEach { mode ->
-                    NavigationDrawerItem(
-                        label = { Text(stringResource(mode.labelRes)) },
-                        selected = mode == themeMode,
-                        onClick = { onThemeModeChange(mode) },
-                        modifier = Modifier.padding(NavigationDrawerItemDefaults.ItemPadding),
-                    )
-                }
                 Spacer(Modifier.height(12.dp))
             }
         },
@@ -354,7 +338,10 @@ fun CookbookRoot(
                     )
                 }
                 composable(ROUTE_SETTINGS) {
-                    SyncSettingsScreen(onBack = { navController.popBackStack() })
+                    SyncSettingsScreen(
+                        themeMode = themeMode,
+                        onThemeModeChange = onThemeModeChange,
+                    )
                 }
                 composable(MainDestination.History.route) {
                     MealHistoryScreen(

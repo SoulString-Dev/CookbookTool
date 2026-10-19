@@ -1,6 +1,7 @@
 package org.miu.cookbook.ui.settings
 
 import android.os.Build
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -13,22 +14,16 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
-import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.Scaffold
+import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
-import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -50,12 +45,16 @@ import org.miu.cookbook.data.db.SyncStateEntity
 import org.miu.cookbook.data.sync.SyncStatus
 import org.miu.cookbook.di.LocalAppContainer
 import org.miu.cookbook.ui.components.LocalMessenger
+import org.miu.cookbook.ui.theme.ThemeMode
 import java.time.Instant
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 
 /**
- * 设置页：现在只有「家庭共享」这一节。
+ * 设置页：外观 + 家庭共享两节。
+ *
+ * 顶栏由外面的 [org.miu.cookbook.ui.CookbookRoot] 提供（那里管着返回箭头与标题），
+ * 这里**不要再套 Scaffold**——否则会出现两个标题、两个返回按钮。
  *
  * 两种形态共用一页：
  * - 没配对：填地址 / 配对码 / 设备名，点「配对」；
@@ -64,9 +63,8 @@ import java.time.format.DateTimeFormatter
  * 配对码是**服务端**生成的一次性口令（写在服务端的 `pair-code.txt` 里），不是用户自己设的密码，
  * 所以这里不能给「记住我」之类的暗示——换个服务端就得重新配对。
  */
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun SyncSettingsScreen(onBack: () -> Unit) {
+fun SyncSettingsScreen(themeMode: ThemeMode, onThemeModeChange: (ThemeMode) -> Unit) {
     val container = LocalAppContainer.current
     val messenger = LocalMessenger.current
     val scope = rememberCoroutineScope()
@@ -136,54 +134,51 @@ fun SyncSettingsScreen(onBack: () -> Unit) {
         }
     }
 
-    Scaffold(
-        topBar = {
-            TopAppBar(
-                title = { Text(stringResource(R.string.settings_title)) },
-                navigationIcon = {
-                    IconButton(onClick = onBack) {
-                        Icon(
-                            imageVector = Icons.AutoMirrored.Filled.ArrowBack,
-                            contentDescription = stringResource(R.string.action_back),
-                        )
-                    }
-                },
-            )
-        },
-    ) { innerPadding ->
-        Column(
-            modifier = Modifier
-                .padding(innerPadding)
-                .verticalScroll(rememberScrollState())
-                .padding(horizontal = 20.dp, vertical = 8.dp),
-        ) {
-            HorizontalDivider(Modifier.padding(vertical = 8.dp))
-
-            if (!paired) {
-                PairForm(
-                    primaryUrl = primaryUrl,
-                    onPrimaryUrlChange = { primaryUrl = it },
-                    primaryLooksOk = primaryLooksOk,
-                    localUrl = localUrl,
-                    onLocalUrlChange = { localUrl = it },
-                    localLooksOk = localLooksOk,
-                    pairCode = pairCode,
-                    onPairCodeChange = { input -> pairCode = input.filter { it.isDigit() }.take(6) },
-                    deviceName = deviceName,
-                    onDeviceNameChange = { deviceName = it },
-                    busy = busy,
-                    canPair = canPair,
-                    onPair = { pair() },
-                )
-            } else {
-                PairedPanel(
-                    state = syncState,
-                    localUrl = container.syncCredentials.localUrl,
-                    status = status,
-                    onSync = { syncNow() },
-                    onDisconnect = { showDisconnect = true },
-                )
+    Column(
+        modifier = Modifier
+            .verticalScroll(rememberScrollState())
+            .padding(horizontal = 20.dp, vertical = 8.dp),
+    ) {
+        SectionTitle(stringResource(R.string.theme_appearance))
+        ThemeMode.entries.forEach { mode ->
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable { onThemeModeChange(mode) }
+                    .padding(vertical = 4.dp),
+            ) {
+                RadioButton(selected = mode == themeMode, onClick = { onThemeModeChange(mode) })
+                Spacer(Modifier.width(8.dp))
+                Text(stringResource(mode.labelRes), style = MaterialTheme.typography.bodyLarge)
             }
+        }
+        Spacer(Modifier.height(8.dp))
+
+        if (!paired) {
+            PairForm(
+                primaryUrl = primaryUrl,
+                onPrimaryUrlChange = { primaryUrl = it },
+                primaryLooksOk = primaryLooksOk,
+                localUrl = localUrl,
+                onLocalUrlChange = { localUrl = it },
+                localLooksOk = localLooksOk,
+                pairCode = pairCode,
+                onPairCodeChange = { input -> pairCode = input.filter { it.isDigit() }.take(6) },
+                deviceName = deviceName,
+                onDeviceNameChange = { deviceName = it },
+                busy = busy,
+                canPair = canPair,
+                onPair = { pair() },
+            )
+        } else {
+            PairedPanel(
+                state = syncState,
+                localUrl = container.syncCredentials.localUrl,
+                status = status,
+                onSync = { syncNow() },
+                onDisconnect = { showDisconnect = true },
+            )
         }
     }
 

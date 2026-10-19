@@ -307,8 +307,11 @@ docker compose exec cookbook-sync \
   编辑图标已经去掉，多选统一从「⋮」进。
 - **安卓返回键先退模式再退页面**：记录模式 → 多选 → 搜索词，逐层收；详情页编辑态先退出
   编辑态。不会一按就回到桌面。
-- **外观**在侧边栏最下方：跟随系统 / 日间 / 夜间，存在 SharedPreferences 里（为这一个开关
-  引 DataStore 不划算）。主题状态放在 `CookbookTheme` 外面，否则改了不生效。
+- **外观在设置页里**（跟随系统 / 日间 / 夜间），存 SharedPreferences（为这一个开关引
+  DataStore 不划算）。主题状态放在 `CookbookTheme` 外面，否则改了不生效。侧边栏最下方只留
+  一个「设置」入口，不再把三项外观直接铺在抽屉里。
+- **设置页自己不带顶栏**：标题与返回箭头由 `CookbookRoot` 的 `TopAppBar` 统一提供，
+  里面再套一个 `Scaffold` 就会出现两条标题、两个返回按钮。
 - **叫法统一**：应用名「食谱本」，功能名一律用「食谱」（不再出现「菜谱」）。
 - **正文的几级标题展示时不画井号**，字号拉开层级：一级 28sp、二级 22sp、三级 18sp、正文 16sp
   （`ui/recipes/MarkdownStyles.kt` 里的 `Mdh1Style/Mdh2Style/Mdh3Style/MdBodyStyle`，
@@ -363,6 +366,9 @@ docker compose exec cookbook-sync \
   HTTP 用 JDK 自带的 `com.sun.net.httpserver`、库用 sqlite-jdbc（这台开发机拉不到 Ktor，
   家用 NAS 上也不需要）。15 个服务端测试（真起进程内 HTTP 服务、真发请求）+
   `scripts/sync-server-check.sh`（curl 全流程自检）+ `deploy/` 的 Dockerfile 与 compose
+- [x] **1.1.3** 设置页收拢：去掉页内那条重复的顶栏（原来顶部叠着两条「设置」、两个返回箭头），
+  外观三种模式从侧边栏搬进设置页（单选），抽屉里只在最下方留一个「设置」入口；
+  顺带把配对码说明改成「十分钟失效、服务端会自动换新的」
 - [x] **1.1.2** 修配对卡住的另一处：一次性配对码十分钟就失效，而服务端只在启动时生成过一次，
   失效后既不再发新的、文件里也还留着那个过期的——于是只能重启容器才能配对。
   现在服务端每 15 秒检查一次，失效就换新并改写 `pair-code.txt`（补了服务端测试）。

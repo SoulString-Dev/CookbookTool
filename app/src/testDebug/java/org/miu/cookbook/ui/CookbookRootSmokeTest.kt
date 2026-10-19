@@ -3,6 +3,7 @@ package org.miu.cookbook.ui
 import androidx.activity.ComponentActivity
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.semantics.SemanticsActions
+import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onAllNodesWithText
@@ -75,6 +76,16 @@ class CookbookRootSmokeTest {
 
         composeRule.onNodeWithText("设置").performSemanticsAction(SemanticsActions.OnClick)
         composeRule.waitForIdle()
+
+        // 顶栏只有一条、只有一个标题：正好两处「设置」= 顶栏标题 + 抽屉里那一条
+        // （抽屉收起来后节点还在树里）。设置页里若再自带一条 TopAppBar 就会变成三处
+        composeRule.onAllNodesWithText("设置").assertCountEquals(2)
+
+        // 外观三种模式搬到了这里
+        composeRule.onNodeWithText("外观").assertIsDisplayed()
+        composeRule.onNodeWithText("跟随系统").assertExists()
+        composeRule.onNodeWithText("日间模式").assertExists()
+        composeRule.onNodeWithText("夜间模式").assertExists()
 
         // 没配对时给的是配对表单：地址、配对码、设备名
         composeRule.onNodeWithText("家庭共享").assertIsDisplayed()
