@@ -79,6 +79,46 @@ class ServerTest {
     // ------------------------------------------------------------ 用例
 
     @Test
+    fun `配对码过期后服务端会自己换一个新的并写进文件`() {
+        // 一次性码十分钟失效；要是服务端不主动换，文件里就一直躺着那个过期的，
+        // 用户只能重启容器才能配对（1.1.1 的真机反馈就是这么卡住的）。
+        val s = SyncServer(
+            ServerConfig(
+                port = 0,
+                dataDir = tmp.newFolder(),
+                pairCode = "",
+                apiPerMinute = 0,
+                blobPerMinute = 0,
+                pairPerMinute = 0,
+            ),
+        )
+        try {
+            // 造一个 11 分钟前生成的码：按 TTL 已经失效
+            s.store().newPairCode(System.currentTimeMillis() - 11 * 60 * 1000)
+            assertNull("过期码不该再被认作有效", s.store().currentPairCode())
+
+            val fresh = s.refreshPairCode()
+
+            assertEquals(6, fresh.length)
+            assertEquals(fresh, s.store().currentPairCode())
+            assertEquals(fresh, s.pairCodeFile().readText().trim())
+
+            // 换出来的码真的能用
+            val port = s.start()
+            val request = HttpRequest.newBuilder(URI.create("http://127.0.0.1:$port${SyncProtocol.PATH_PAIR}"))
+                .header("Content-Type", "application/json")
+                .POST(HttpRequest.BodyPublishers.ofString(SyncJson.json.encodeToString(PairRequest(fresh, "甲"))))
+                .build()
+            val response = http.send(request, HttpResponse.BodyHandlers.ofByteArray())
+            assertEquals(200, response.statusCode())
+            assertEquals(36, decode<PairResponse>(String(response.body(), Charsets.UTF_8)).deviceId.length)
+        } finally {
+            s.close()
+        }
+    }
+
+
+    @Test
     fun `health 不需要令牌`() {
         val res = call("GET", SyncProtocol.PATH_HEALTH)
         assertEquals(200, res.status)

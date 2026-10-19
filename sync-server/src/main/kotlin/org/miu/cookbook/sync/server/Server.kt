@@ -39,6 +39,7 @@ class SyncServer(private val config: ServerConfig) : AutoCloseable {
     }
     private var http: HttpServer? = null
     private var gcThread: Thread? = null
+    private var pairThread: Thread? = null
 
     /** @return 实际监听端口（测试里传 0 就是随机端口） */
     fun start(bind: InetSocketAddress = InetSocketAddress(config.port)): Int {
@@ -48,11 +49,13 @@ class SyncServer(private val config: ServerConfig) : AutoCloseable {
         server.start()
         http = server
         startGcLoop()
+        startPairCodeLoop()
         return server.address.port
     }
 
     override fun close() {
         http?.stop(0)
+        pairThread?.interrupt()
         executor.shutdownNow()
         executor.awaitTermination(2, TimeUnit.SECONDS)
         store.close()
@@ -66,6 +69,27 @@ class SyncServer(private val config: ServerConfig) : AutoCloseable {
         config.pairCode.ifEmpty { store.currentPairCode() ?: store.newPairCode() }
 
     fun pairCodeFile(): File = File(config.dataDir, "pair-code.txt")
+
+    /**
+     * 保证随时都能拿到一个**有效**的配对码，并把最新的写进 `pair-code.txt`。
+     *
+     * 只在启动时生成一次是不够的：一次性码十分钟就过期，过期后服务端不会再发新的，
+     * 文件里留着那个过期的——用户只能重启容器才能配对（1.1.1 的真机反馈就是这么卡住的）。
+     */
+    fun refreshPairCode(): String {
+        val code = if (config.pairCode.isNotEmpty()) {
+            config.pairCode
+        } else {
+            store.currentPairCode() ?: store.newPairCode()
+        }
+        val file = pairCodeFile()
+        val shown = runCatching { file.readText().trim() }.getOrNull()
+        if (shown != code) {
+            runCatching { file.writeText(code + "\n") }
+            log("配对码：$code（也写在 ${file.path}）")
+        }
+        return code
+    }
 
     // ------------------------------------------------------------ 路由
 
@@ -235,6 +259,20 @@ class SyncServer(private val config: ServerConfig) : AutoCloseable {
         }
 
     /** 每小时扫一遍：墓碑到期物理删，孤儿图片（超过 24 小时没人引用）也清掉。 */
+    /** 每 [PAIR_CODE_REFRESH_MS] 摸一次：过期了就换新的，文件跟着更新。 */
+    private fun startPairCodeLoop() {
+        pairThread = thread(isDaemon = true, name = "sync-pair-code") {
+            while (!Thread.currentThread().isInterrupted) {
+                runCatching { refreshPairCode() }.onFailure { log("配对码刷新出错：$it") }
+                try {
+                    Thread.sleep(PAIR_CODE_REFRESH_MS)
+                } catch (e: InterruptedException) {
+                    return@thread
+                }
+            }
+        }
+    }
+
     private fun startGcLoop() {
         gcThread = thread(isDaemon = true, name = "sync-gc") {
             while (!Thread.currentThread().isInterrupted) {
@@ -253,3 +291,6 @@ class SyncServer(private val config: ServerConfig) : AutoCloseable {
         }
     }
 }
+
+/** 多久看一次配对码是否过期。一次 SQLite 查询，成本可以忽略。 */
+private const val PAIR_CODE_REFRESH_MS = 15_000L

@@ -318,6 +318,20 @@ class SyncEngineTest {
     }
 
 
+
+    @Test
+    fun `配对码不对时提示的是配对码，不是令牌失效`() = runBlocking {
+        // 服务端对「配对码不对」回的是 403 bad_code。以前这条被笼统翻译成「令牌失效」，
+        // 看提示的人会去查令牌，而真正该看的是配对码。
+        val device = newDevice("bad-code")
+
+        val result = device.engine.pair(base, "", "000000", "测试机")
+
+        assertTrue(result.isFailure)
+        val message = result.exceptionOrNull()?.message.orEmpty()
+        assertTrue("提示应该指向配对码，实际是：$message", message.contains("配对码"))
+    }
+
     @Test
     fun `同步不会占住调用方的线程`() = runBlocking {
         // 界面是在主线程上点「配对」「立即同步」的。网络调用要是不切线程，

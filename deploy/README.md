@@ -46,9 +46,12 @@ docker compose -f docker-compose.nas.yml logs | grep PAIR_CODE
 ### 4. 拿配对码
 
 ```bash
-cat data/pair-code.txt        # 一次性码，每 10 分钟换一个
+cat data/pair-code.txt        # 一次性码，十分钟失效
 docker compose -f docker-compose.nas.yml logs | grep PAIR_CODE
 ```
+
+**过期了不用重启容器**：服务端每 15 秒看一眼，码失效就自动换一个新的、顺手把文件改写掉
+（1.1.2 起）。所以 `cat` 出来的永远当前有效，拿去配对就行。
 
 不想每次去看，就在 compose 里打开这一行（固定 6 位数字）：
 
@@ -145,7 +148,8 @@ COOKBOOK_REQUIRE_HTTPS: "1"                   # 裸 HTTP 一律拒绝（/health 
 | 现象 | 先看这里 |
 | --- | --- |
 | 手机连不上 | 地址是不是填成了 `127.0.0.1`（要填 NAS 的局域网 IP）；NAS 防火墙放 18088 了吗；在 NAS 上 `curl http://127.0.0.1:18088/api/v1/health` 通不通 |
-| 配对码不对 / 过期 | 一次性码 10 分钟换一次，`cat data/pair-code.txt` 拿最新的；或者干脆设固定码 |
+| 配对码不对 / 过期 | 服务端会自动换新的，`cat data/pair-code.txt` 拿当前那个（1.1.2 起）；或者干脆设固定码 |
+| 配对提示 403 / 401 | 除了配对码，还要看前面那层反代有没有加登录（`basic_auth` 之类） |
 | 401 / 「令牌失效」 | 服务端换过库或换过令牌，App 里点「断开」再重新配对一次 |
 | 429 | 限流（默认每设备 240 次/分钟，配对 30 次/分钟），等一会儿再点 |
 | 图片传不上去 | 单张超过 10MB 会被拒；`blobs/` 所在分区是不是满了；设置页的错误文字会说明是哪一步 |

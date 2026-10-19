@@ -380,11 +380,17 @@ class SyncEngine(
 
     /** 把底层异常翻成一句人话。这些字符串会直接显示在设置页上。 */
     private fun describe(error: Throwable): String = when (error) {
-        is SyncHttpException -> when (error.status) {
-            401, 403 -> "这个设备的令牌失效了，断开后重新配对"
-            404 -> "服务端不认这个地址（${error.code}）"
-            429 -> "请求太频繁，被服务端限流了，过一会儿再试"
-            in 500..599 -> "服务端出错了（${error.status}）"
+        // 先看错误码再看状态码：403 既可能是「配对码不对」，也可能是「令牌失效」，两回事
+        is SyncHttpException -> when {
+            error.code == "bad_code" ->
+                "配对码不对或已经过期：去服务端的 data/pair-code.txt 看当前那六位（十分钟换一次）"
+            error.code == "device_mismatch" -> "这台设备和服务端的记录对不上，断开后重新配对"
+            error.status == 401 || error.status == 403 ->
+                "服务端拒绝了请求（${error.status} ${error.code}）：令牌可能失效了；" +
+                    "也可能是前面挡着一层要登录的反向代理"
+            error.status == 404 -> "服务端不认这个地址（${error.code}）"
+            error.status == 429 -> "请求太频繁，被服务端限流了，过一会儿再试"
+            error.status in 500..599 -> "服务端出错了（${error.status}）"
             else -> "服务端拒绝了这次同步（${error.status} ${error.code}）"
         }
 
