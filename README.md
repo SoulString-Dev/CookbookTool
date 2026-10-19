@@ -195,7 +195,7 @@ bash scripts/sync-server-check.sh
 
 ```bash
 bash scripts/build.sh :sync-server:fatJar
-.toolchain/jdk/bin/java -jar sync-server/build/libs/sync-server-all.jar --port 8080 --data ./data
+.toolchain/jdk/bin/java -jar sync-server/build/libs/sync-server-all.jar --port 18080 --data ./data
 # 启动日志里的 PAIR_CODE= 就是配对码；也写在 <data>/pair-code.txt
 ```
 
@@ -246,8 +246,8 @@ docker compose exec cookbook-sync \
 装好 App 后，侧边栏 →「设置」→ 家庭共享：
 
 1. **服务器地址**填在外面也能连上的那个：公网域名（套了反代就是 `https://cookbook.example.com`；
-   直接暴露端口就是 `http://家里公网地址:8080`）。别填 `127.0.0.1`，那是手机自己；
-2. **局域网地址**（可选）填 `http://192.168.1.10:8080`。填了之后在家优先走它——
+   直接暴露端口就是 `http://家里公网地址:18080`）。别填 `127.0.0.1`，那是手机自己；
+2. **局域网地址**（可选）填 `http://192.168.1.10:18080`。填了之后在家优先走它——
    不少路由器不支持从内网访问自己的公网地址，硬走公网会连不上，而且绕一圈也慢；
 3. 配对码填服务端 `data/pair-code.txt` 里的那六位（每十分钟换一次，用过即换）；
 4. 点「配对」。
