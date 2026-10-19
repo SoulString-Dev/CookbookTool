@@ -85,29 +85,37 @@ fun SyncSettingsScreen(onBack: () -> Unit) {
     val unknownReason = stringResource(R.string.settings_unknown_reason)
     val fallbackDeviceName = stringResource(R.string.settings_device_default)
 
-    var serverUrl by rememberSaveable { mutableStateOf("") }
+    var primaryUrl by rememberSaveable { mutableStateOf(container.syncCredentials.primaryUrl) }
+    var localUrl by rememberSaveable { mutableStateOf(container.syncCredentials.localUrl) }
     var pairCode by rememberSaveable { mutableStateOf("") }
     var deviceName by rememberSaveable { mutableStateOf(defaultDeviceName(fallbackDeviceName)) }
     var showDisconnect by remember { mutableStateOf(false) }
     var busy by remember { mutableStateOf(false) }
 
-
-    // 已配对时把地址填进输入框，方便改地址后重新配对
+    // 老版本只存了一个地址（在 sync_state 里）：升级上来时把它填进主地址，不然输入框是空的
     LaunchedEffect(syncState?.serverUrl) {
         val saved = syncState?.serverUrl.orEmpty()
-        if (saved.isNotBlank() && serverUrl.isBlank()) serverUrl = saved
+        if (saved.isNotBlank() && primaryUrl.isBlank()) primaryUrl = saved
     }
 
-    val urlTrimmed = serverUrl.trim()
-    val urlLooksOk = urlTrimmed.startsWith("http://") || urlTrimmed.startsWith("https://")
+    val primaryTrimmed = primaryUrl.trim()
+    val primaryLooksOk = primaryTrimmed.startsWith("http://") || primaryTrimmed.startsWith("https://")
+    val localTrimmed = localUrl.trim()
+    val localLooksOk = localTrimmed.isEmpty() ||
+        localTrimmed.startsWith("http://") || localTrimmed.startsWith("https://")
     val codeTrimmed = pairCode.trim()
     val codeLooksOk = codeTrimmed.length == 6 && codeTrimmed.all { it.isDigit() }
-    val canPair = urlLooksOk && codeLooksOk && deviceName.isNotBlank() && !busy
+    val canPair = primaryLooksOk && localLooksOk && codeLooksOk && deviceName.isNotBlank() && !busy
 
     fun pair() {
         busy = true
         scope.launch {
-            val result = container.syncEngine.pair(urlTrimmed, codeTrimmed, deviceName.trim())
+            val result = container.syncEngine.pair(
+                primaryUrl = primaryTrimmed,
+                localUrl = localTrimmed,
+                code = codeTrimmed,
+                deviceName = deviceName.trim(),
+            )
             busy = false
             result
                 .onSuccess {
@@ -153,9 +161,12 @@ fun SyncSettingsScreen(onBack: () -> Unit) {
 
             if (!paired) {
                 PairForm(
-                    serverUrl = serverUrl,
-                    onServerUrlChange = { serverUrl = it },
-                    urlLooksOk = urlLooksOk,
+                    primaryUrl = primaryUrl,
+                    onPrimaryUrlChange = { primaryUrl = it },
+                    primaryLooksOk = primaryLooksOk,
+                    localUrl = localUrl,
+                    onLocalUrlChange = { localUrl = it },
+                    localLooksOk = localLooksOk,
                     pairCode = pairCode,
                     onPairCodeChange = { input -> pairCode = input.filter { it.isDigit() }.take(6) },
                     deviceName = deviceName,
@@ -167,6 +178,7 @@ fun SyncSettingsScreen(onBack: () -> Unit) {
             } else {
                 PairedPanel(
                     state = syncState,
+                    localUrl = container.syncCredentials.localUrl,
                     status = status,
                     onSync = { syncNow() },
                     onDisconnect = { showDisconnect = true },
@@ -202,9 +214,12 @@ fun SyncSettingsScreen(onBack: () -> Unit) {
 
 @Composable
 private fun PairForm(
-    serverUrl: String,
-    onServerUrlChange: (String) -> Unit,
-    urlLooksOk: Boolean,
+    primaryUrl: String,
+    onPrimaryUrlChange: (String) -> Unit,
+    primaryLooksOk: Boolean,
+    localUrl: String,
+    onLocalUrlChange: (String) -> Unit,
+    localLooksOk: Boolean,
     pairCode: String,
     onPairCodeChange: (String) -> Unit,
     deviceName: String,
@@ -222,16 +237,47 @@ private fun PairForm(
     Spacer(Modifier.height(16.dp))
 
     OutlinedTextField(
-        value = serverUrl,
-        onValueChange = onServerUrlChange,
+        value = primaryUrl,
+        onValueChange = onPrimaryUrlChange,
         singleLine = true,
-        isError = serverUrl.isNotBlank() && !urlLooksOk,
-        label = { Text(stringResource(R.string.settings_server_label)) },
-        placeholder = { Text(stringResource(R.string.settings_server_hint)) },
+        isError = primaryUrl.isNotBlank() && !primaryLooksOk,
+        label = { Text(stringResource(R.string.settings_primary_label)) },
+        placeholder = { Text(stringResource(R.string.settings_primary_hint)) },
         supportingText = {
-            if (serverUrl.isNotBlank() && !urlLooksOk) {
-                Text(stringResource(R.string.settings_server_invalid))
-            }
+            Text(
+                stringResource(
+                    if (primaryUrl.isNotBlank() && !primaryLooksOk) {
+                        R.string.settings_server_invalid
+                    } else {
+                        R.string.settings_primary_help
+                    },
+                ),
+            )
+        },
+        keyboardOptions = KeyboardOptions(
+            keyboardType = KeyboardType.Uri,
+            imeAction = ImeAction.Next,
+        ),
+        modifier = Modifier.fillMaxWidth(),
+    )
+    Spacer(Modifier.height(8.dp))
+    OutlinedTextField(
+        value = localUrl,
+        onValueChange = onLocalUrlChange,
+        singleLine = true,
+        isError = localUrl.isNotBlank() && !localLooksOk,
+        label = { Text(stringResource(R.string.settings_local_label)) },
+        placeholder = { Text(stringResource(R.string.settings_local_hint)) },
+        supportingText = {
+            Text(
+                stringResource(
+                    if (localUrl.isNotBlank() && !localLooksOk) {
+                        R.string.settings_server_invalid
+                    } else {
+                        R.string.settings_local_help
+                    },
+                ),
+            )
         },
         keyboardOptions = KeyboardOptions(
             keyboardType = KeyboardType.Uri,
@@ -284,6 +330,7 @@ private fun PairForm(
 @Composable
 private fun PairedPanel(
     state: SyncStateEntity?,
+    localUrl: String,
     status: SyncStatus,
     onSync: () -> Unit,
     onDisconnect: () -> Unit,
@@ -302,6 +349,13 @@ private fun PairedPanel(
         style = MaterialTheme.typography.bodyMedium,
         color = MaterialTheme.colorScheme.onSurfaceVariant,
     )
+    if (localUrl.isNotBlank()) {
+        Text(
+            text = stringResource(R.string.settings_local_value, localUrl),
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+    }
     val lastSyncAt = state?.lastSyncAt ?: 0L
     Text(
         text = stringResource(

@@ -78,7 +78,9 @@ class CookbookRootSmokeTest {
 
         // 没配对时给的是配对表单：地址、配对码、设备名
         composeRule.onNodeWithText("家庭共享").assertIsDisplayed()
-        composeRule.onNodeWithText("服务端地址").assertExists()
+        // 两个地址框都在：公网一个、可选的局域网一个
+        composeRule.onNodeWithText("服务器地址").assertExists()
+        composeRule.onNodeWithText("局域网地址（可选）").assertExists()
         composeRule.onNodeWithText("配对码").assertExists()
     }
 }

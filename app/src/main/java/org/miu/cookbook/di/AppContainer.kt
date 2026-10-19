@@ -38,7 +38,7 @@ class AppContainer(context: Context) {
 
     /** 家庭共享的同步引擎。设置页、首页提示、进前台时的自动同步都从这里拿。 */
     val syncEngine: SyncEngine by lazy {
-        SyncEngine(database, repository, filesDir, syncCredentials)
+        SyncEngine(database, repository, filesDir, syncCredentials, appScope)
     }
 
     /**

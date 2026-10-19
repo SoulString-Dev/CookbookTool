@@ -35,6 +35,40 @@ class SyncCredentials(
             prefs.edit().putString(KEY_DEVICE_NAME, value).apply()
         }
 
+    /** 配对时用的地址，通常是公网地址或域名——在外面靠它。 */
+    var primaryUrl: String
+        get() = prefs.getString(KEY_PRIMARY_URL, "").orEmpty()
+        set(value) {
+            prefs.edit().putString(KEY_PRIMARY_URL, value).apply()
+        }
+
+    /** 局域网地址，可以留空。在家优先走它，省一趟公网往返（路由器不一定支持回环）。 */
+    var localUrl: String
+        get() = prefs.getString(KEY_LOCAL_URL, "").orEmpty()
+        set(value) {
+            prefs.edit().putString(KEY_LOCAL_URL, value).apply()
+        }
+
+    /** 最近一次连上的地址。下次先试它，免得每次都先撞一遍不通的那条。 */
+    var lastGoodUrl: String
+        get() = prefs.getString(KEY_LAST_GOOD_URL, "").orEmpty()
+        set(value) {
+            prefs.edit().putString(KEY_LAST_GOOD_URL, value).apply()
+        }
+
+    /**
+     * 这一轮按什么顺序试地址。
+     *
+     * 「局域网 → 上次成功的 → 配对时的地址 → 库里记的地址」：
+     * 在家第一条就通，一条内网请求完事；在外面局域网那条会很快失败（不在同一个网段时通常几百毫秒
+     * 就报「连不上」，最多等一个短超时），自然落到公网地址上。去重是为了别对同一个地址试两遍。
+     */
+    fun candidateUrls(fallback: String = ""): List<String> =
+        listOf(localUrl, lastGoodUrl, primaryUrl, fallback)
+            .map { it.trim().trimEnd('/') }
+            .filter { it.isNotEmpty() }
+            .distinct()
+
     val paired: Boolean get() = token.isNotEmpty()
 
     fun clear() {
@@ -45,5 +79,8 @@ class SyncCredentials(
         const val PREF_NAME = "sync-credentials"
         const val KEY_TOKEN = "device_token"
         const val KEY_DEVICE_NAME = "device_name"
+        const val KEY_PRIMARY_URL = "primary_url"
+        const val KEY_LOCAL_URL = "local_url"
+        const val KEY_LAST_GOOD_URL = "last_good_url"
     }
 }

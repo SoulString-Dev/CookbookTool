@@ -141,6 +141,23 @@ fun CookbookRoot(
         if (container.syncEngine.paired) container.syncEngine.syncNow()
     }
 
+    // 「改完就同步」：编辑是即时落盘的，但落盘只在本地。
+    // 从编辑态退出来（按返回、点「完成」、从子编辑器回到详情页）或从详情页回到列表时触发一次，
+    // 引擎里再把一秒半以内的多次触发合并成一轮。
+    val editingNow = backStackEntry?.arguments?.getBoolean(ARG_RECIPE_EDIT) == true ||
+        route == ROUTE_INGREDIENT_EDIT ||
+        route == ROUTE_IMAGE_EDIT ||
+        route == ROUTE_CONTENT_EDIT
+    var wasEditing by remember { mutableStateOf(false) }
+    var lastRoute by remember { mutableStateOf<String?>(null) }
+    LaunchedEffect(editingNow, route) {
+        val leftEditor = wasEditing && !editingNow
+        val backHome = mainDestination != null && lastRoute?.startsWith("recipe/") == true
+        if (leftEditor || backHome) container.syncEngine.requestSync()
+        wasEditing = editingNow
+        lastRoute = route
+    }
+
     // 详情页的编辑态与 Markdown 浮窗：顶栏上的按钮要直接改它们，所以状态放在这里，
     // 按 recipeId 记住（在「详情页 → 原料编辑器 → 返回」的来回里一直活着）
     val routeRecipeId = backStackEntry?.arguments?.getLong(ARG_RECIPE_ID) ?: 0L

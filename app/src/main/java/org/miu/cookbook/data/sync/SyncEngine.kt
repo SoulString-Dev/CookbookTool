@@ -1,5 +1,10 @@
 package org.miu.cookbook.data.sync
 
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -8,12 +13,14 @@ import kotlinx.coroutines.sync.withLock
 import org.miu.cookbook.data.CookbookRepository
 import org.miu.cookbook.data.db.AppDatabase
 import org.miu.cookbook.data.db.SyncStateEntity
+import org.miu.cookbook.sync.model.PairResponse
 import org.miu.cookbook.sync.model.PushDelete
 import org.miu.cookbook.sync.model.PushRequest
 import org.miu.cookbook.sync.model.PushUpsert
 import org.miu.cookbook.sync.model.SyncProtocol
 import org.miu.cookbook.sync.model.SyncRecord
 import java.io.File
+import java.io.IOException
 import java.net.ConnectException
 import java.net.SocketTimeoutException
 import java.net.UnknownHostException
@@ -53,10 +60,17 @@ class SyncEngine(
     private val repository: CookbookRepository,
     baseDir: File,
     private val credentials: SyncCredentials,
+    /** 后台同步活在这里：编辑器退出后的那一发不能跟着界面的 lifecycle 一起死。 */
+    private val scope: CoroutineScope,
 ) {
 
     private val store = SyncStore(database, baseDir)
     private val mutex = Mutex()
+    private val launchScope = scope
+
+    /** 「有点事要同步」的信号，合并式：连点十下也只跑一轮。 */
+    private val requests = Channel<Unit>(Channel.CONFLATED)
+    private var worker: Job? = null
     private val _status = MutableStateFlow<SyncStatus>(SyncStatus.Idle)
     val status: StateFlow<SyncStatus> = _status.asStateFlow()
 
@@ -68,18 +82,46 @@ class SyncEngine(
      * 归零这一步很容易漏：配对时服务端会回一个 `serverRev`，顺手拿它当水位的话，
      * 新设备第一次同步会把服务端上已有的记录全部跳过——看起来「同步成功」，其实一张菜谱都没下来。
      */
-    suspend fun pair(serverUrl: String, code: String, deviceName: String): Result<Unit> = runCatching {
-        val api = SyncApi(serverUrl.trim())
-        val response = api.pair(code.trim(), deviceName.trim())
-        credentials.token = response.token
+    suspend fun pair(
+        primaryUrl: String,
+        localUrl: String,
+        code: String,
+        deviceName: String,
+    ): Result<Unit> = runCatching {
+        credentials.primaryUrl = primaryUrl.trim().trimEnd('/')
+        credentials.localUrl = localUrl.trim().trimEnd('/')
+
+        val candidates = credentials.candidateUrls(credentials.primaryUrl)
+        if (candidates.isEmpty()) throw IllegalStateException("还没填服务端地址")
+
+        var response: PairResponse? = null
+        var usedUrl = ""
+        var lastError: Throwable? = null
+        for ((index, url) in candidates.withIndex()) {
+            val api = SyncApi(url, connectTimeoutMs = timeoutFor(index, candidates.lastIndex))
+            try {
+                response = api.pair(code.trim(), deviceName.trim())
+                usedUrl = url
+                break
+            } catch (error: SyncHttpException) {
+                // 服务端答话了：配对码不对就是配对码不对，换个地址也一样
+                throw error
+            } catch (error: IOException) {
+                lastError = error
+            }
+        }
+        val paired = response ?: throw (lastError ?: IOException("连不上服务端"))
+
+        credentials.token = paired.token
         credentials.deviceName = deviceName.trim()
+        credentials.lastGoodUrl = usedUrl
 
         val current = repository.currentSyncState() ?: SyncStateEntity()
         repository.saveSyncState(
             current.copy(
-                serverUrl = serverUrl.trim(),
+                serverUrl = usedUrl,
                 // 服务端发的设备号，不是本机自己编的那个：令牌跟它绑定，推的时候必须带同一个
-                deviceId = response.deviceId,
+                deviceId = paired.deviceId,
                 lastRev = 0,
                 lastSyncAt = 0,
                 lastError = "",
@@ -104,24 +146,71 @@ class SyncEngine(
      */
     suspend fun syncNow(): Result<SyncReport> = mutex.withLock {
         val state = repository.currentSyncState()
-        if (!credentials.paired || state == null || state.serverUrl.isBlank()) {
+        if (!credentials.paired || state == null) {
             return Result.failure(IllegalStateException("还没配对"))
         }
 
+        val candidates = credentials.candidateUrls(state.serverUrl)
+        if (candidates.isEmpty()) return fail(IllegalStateException("还没填服务端地址"))
+
         _status.value = SyncStatus.Running
-        runCatching { syncOnce(state) }
-            .onSuccess { _status.value = SyncStatus.Done(it, System.currentTimeMillis()) }
-            .onFailure { error ->
-                val message = describe(error)
-                _status.value = SyncStatus.Failed(message)
-                runCatching {
-                    repository.currentSyncState()?.let { repository.saveSyncState(it.copy(lastError = message)) }
-                }
+        var lastError: Throwable? = null
+        for ((index, url) in candidates.withIndex()) {
+            val api = SyncApi(url, credentials.token, connectTimeoutMs = timeoutFor(index, candidates.lastIndex))
+            try {
+                val report = syncOnce(api, state)
+                credentials.lastGoodUrl = url
+                _status.value = SyncStatus.Done(report, System.currentTimeMillis())
+                return Result.success(report)
+            } catch (error: SyncHttpException) {
+                // 服务端答话了：地址是对的，换一个地址也没用（电解不开就是解不开）
+                return fail(error)
+            } catch (error: IOException) {
+                // 网络层失败（不在家、地址写错、服务端没起）：换下一个地址接着试
+                lastError = error
             }
+        }
+        fail(lastError ?: IOException("连不上服务端"), tried = candidates.size)
     }
 
-    private suspend fun syncOnce(state: SyncStateEntity): SyncReport {
-        val api = SyncApi(state.serverUrl, credentials.token)
+    /**
+     * 编辑完之后来一发：**把短时间内的多次调用合并成一次同步**。
+     *
+     * 不直接调 [syncNow] 的原因很实在：在原料/正文编辑器里来回按返回，会连着一串「退出编辑」，
+     * 每次都真发一轮请求既浪费又容易自己跟自己打架。等两秒，安静下来再跑。
+     */
+    fun requestSync() {
+        if (!paired) return
+        if (worker?.isActive != true) {
+            worker = scope.launch {
+                for (ignored in requests) {
+                    delay(DEBOUNCE_MILLIS)
+                    // 等待期间又来的请求，含义和这一条一样，吞掉就行
+                    while (requests.tryReceive().isSuccess) {
+                        // 合并
+                    }
+                    syncNow()
+                }
+            }
+        }
+        requests.trySend(Unit)
+    }
+
+    private suspend fun fail(error: Throwable, tried: Int = 0): Result<SyncReport> {
+        val base = describe(error)
+        val message = if (tried > 1) "$base（$tried 个地址都试过了）" else base
+        _status.value = SyncStatus.Failed(message)
+        runCatching {
+            repository.currentSyncState()?.let { repository.saveSyncState(it.copy(lastError = message)) }
+        }
+        return Result.failure(error)
+    }
+
+    /** 前面几个候选地址用短超时探路，最后一个（通常是公网）才舍得等。 */
+    private fun timeoutFor(index: Int, lastIndex: Int): Int =
+        if (index < lastIndex) PROBE_TIMEOUT_MS else NORMAL_TIMEOUT_MS
+
+    private suspend fun syncOnce(api: SyncApi, state: SyncStateEntity): SyncReport {
         // 正常情况用配对时服务端给的设备号；老数据没有的话回退到本机标识
         val deviceId = state.deviceId.ifBlank { repository.deviceId() }
 
@@ -172,7 +261,13 @@ class SyncEngine(
 
         val latest = repository.currentSyncState() ?: state
         repository.saveSyncState(
-            latest.copy(lastRev = since, lastSyncAt = System.currentTimeMillis(), lastError = ""),
+            latest.copy(
+                // 记下这次真正连上的地址：设置页显示它，下次也先试它
+                serverUrl = api.url,
+                lastRev = since,
+                lastSyncAt = System.currentTimeMillis(),
+                lastError = "",
+            ),
         )
         return SyncReport(pulled = pulled, pushed = pushed, conflicts = conflicts, lastRev = since)
     }
@@ -270,11 +365,21 @@ class SyncEngine(
         is UnknownHostException -> "找不到服务端地址，检查一下填的地址"
         is ConnectException -> "连不上服务端：确认地址、端口，以及服务端有没有在跑"
         is SocketTimeoutException -> "服务端没响应（超时）"
+        is IOException -> "连不上服务端：确认地址、端口，以及服务端有没有在跑"
         else -> error.message ?: error.javaClass.simpleName
     }
 
     private companion object {
         /** 一页 200 条、最多翻这么多页。防的是服务端分页逻辑出 bug 时无限转圈。 */
         const val MAX_PULL_PAGES = 500
+
+        /** 探路用的短超时：不在家时别让一条不通的局域网地址拖住整轮同步。 */
+        const val PROBE_TIMEOUT_MS = 3_000
+
+        /** 最后一个候选（通常是公网）给正常的超时。 */
+        const val NORMAL_TIMEOUT_MS = 10_000
+
+        /** 编辑完等这么久再同步：把「来回按返回」的那一串改动合并成一轮。 */
+        const val DEBOUNCE_MILLIS = 1_500L
     }
 }

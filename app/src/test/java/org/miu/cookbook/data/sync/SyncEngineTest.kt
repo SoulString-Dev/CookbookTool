@@ -3,6 +3,11 @@ package org.miu.cookbook.data.sync
 import android.content.Context
 import androidx.room.Room
 import androidx.test.core.app.ApplicationProvider
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import org.junit.After
@@ -66,7 +71,10 @@ class SyncEngineTest {
 
     @After
     fun tearDown() {
-        devices.forEach { it.db.close() }
+        devices.forEach {
+            it.scope.cancel()
+            it.db.close()
+        }
         server.close()
     }
 
@@ -232,6 +240,55 @@ class SyncEngineTest {
     }
 
     @Test
+    fun `局域网地址连不上时自动落到公网地址`() = runBlocking {
+        val a = newDevice("a")
+        a.repo.createRecipe("红烧肉")
+
+        // 端口 1 一定没人监听：连接会被立刻拒掉，正好模拟「不在家」
+        val dead = "http://127.0.0.1:1"
+        a.engine.pair(primaryUrl = base, localUrl = dead, code = PAIR_CODE, deviceName = "厨房的手机").getOrThrow()
+
+        assertEquals("配对时就该落到能通的那个地址", base, a.credentials.lastGoodUrl)
+        assertTrue("配完仍然算配对成功", a.credentials.paired)
+
+        val report = a.engine.syncNow().getOrThrow()
+        assertEquals(1, report.pushed)
+        assertEquals(1, server.store().recipeCount())
+    }
+
+    @Test
+    fun `地址按局域网优先排列，末尾才轮到兜底`() {
+        val credentials = SyncCredentials(context, prefsName = "sync-credentials-order")
+        credentials.localUrl = " http://192.168.1.10:8080/ "
+        credentials.lastGoodUrl = "https://home.example.com"
+        credentials.primaryUrl = "https://home.example.com/"
+
+        assertEquals(
+            listOf("http://192.168.1.10:8080", "https://home.example.com", "http://127.0.0.1:9"),
+            credentials.candidateUrls("http://127.0.0.1:9"),
+        )
+    }
+
+    @Test
+    fun `编辑完请求同步会真的把改动推上去`() = runBlocking {
+        val a = newDevice("a")
+        a.pairAndSync(base)
+        assertEquals(0, server.store().recipeCount())
+
+        // 模拟「从编辑页退出来」：只发一个合并信号，不直接等同步结果
+        a.repo.createRecipe("可乐鸡翅")
+        a.engine.requestSync()
+
+        val pushed = awaitUntil { server.store().recipeCount() == 1L }
+        assertTrue("退出编辑后应该自己同步上去", pushed)
+
+        // 连续请求多次也只该落一次，而且不报错
+        a.repo.createRecipe("西红柿炒蛋")
+        repeat(5) { a.engine.requestSync() }
+        assertTrue("合并后的多次请求最终也要同步上去", awaitUntil { server.store().recipeCount() == 2L })
+    }
+
+    @Test
     fun `没配对时同步会失败并说清原因`() = runBlocking {
         val a = newDevice("a")
         val result = a.engine.syncNow()
@@ -242,14 +299,14 @@ class SyncEngineTest {
     @Test
     fun `配对码不对就配不上`() = runBlocking {
         val a = newDevice("a")
-        val result = a.engine.pair(base, "000000", "厨房的手机")
+        val result = a.engine.pair(base, "", "000000", "厨房的手机")
         assertTrue(result.isFailure)
         assertTrue("失败时不能留下半截令牌", !a.credentials.paired)
     }
 
     /** 只配对一次，之后每次都是普通同步（重复配对会把水位打回 0，那是另一回事）。 */
     private suspend fun Device.pairAndSync(serverUrl: String): SyncReport {
-        if (!credentials.paired) engine.pair(serverUrl, PAIR_CODE, tag).getOrThrow()
+        if (!credentials.paired) engine.pair(serverUrl, "", PAIR_CODE, tag).getOrThrow()
         return engine.syncNow().getOrThrow()
     }
 
@@ -260,6 +317,7 @@ class SyncEngineTest {
         val engine: SyncEngine,
         val credentials: SyncCredentials,
         val dir: File,
+        val scope: CoroutineScope,
     )
 
     private fun newDevice(tag: String): Device {
@@ -273,9 +331,20 @@ class SyncEngineTest {
             .build()
         val repo = CookbookRepository(db, dir)
         val credentials = SyncCredentials(context, prefsName = "sync-credentials-$tag")
-        val engine = SyncEngine(db, repo, dir, credentials)
+        val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+        val engine = SyncEngine(db, repo, dir, credentials, scope)
 
-        return Device(tag, db, repo, engine, credentials, dir).also { devices += it }
+        return Device(tag, db, repo, engine, credentials, dir, scope).also { devices += it }
+    }
+
+    /** 后台同步是「过一会儿」发生的：轮询等它发生，而不是 sleep 一个拍脑袋的时长。 */
+    private suspend fun awaitUntil(timeoutMs: Long = 8_000, condition: () -> Boolean): Boolean {
+        val deadline = System.currentTimeMillis() + timeoutMs
+        while (System.currentTimeMillis() < deadline) {
+            if (condition()) return true
+            delay(20)
+        }
+        return condition()
     }
 
     private companion object {

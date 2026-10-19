@@ -178,8 +178,13 @@
     <string name="settings_title">设置</string>
     <string name="settings_sync_section">家庭共享</string>
     <string name="settings_sync_intro">在同一台服务端上配对过的设备，菜谱会互相同步。哪天吃了什么（饮食记录）各家自己留着，不同步。</string>
-    <string name="settings_server_label">服务端地址</string>
-    <string name="settings_server_hint">例如 http://192.168.1.10:8080</string>
+    <string name="settings_primary_label">服务器地址</string>
+    <string name="settings_primary_hint">例如 https://cookbook.example.com:8443</string>
+    <string name="settings_primary_help">在外面用它：公网地址或域名，带 http:// 或 https://</string>
+    <string name="settings_local_label">局域网地址（可选）</string>
+    <string name="settings_local_hint">例如 http://192.168.1.10:8080</string>
+    <string name="settings_local_help">在家时优先走这个，省一趟公网往返；不填也能用</string>
+    <string name="settings_local_value">局域网地址：%1$s</string>
     <string name="settings_server_invalid">地址要以 http:// 或 https:// 开头</string>
     <string name="settings_pair_code_label">配对码</string>
     <string name="settings_pair_code_hint">六位数字</string>

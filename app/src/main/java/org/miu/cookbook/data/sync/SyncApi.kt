@@ -33,9 +33,14 @@ class SyncHttpException(
 class SyncApi(
     baseUrl: String,
     private val token: String = "",
+    /** 连不上的地址要尽快放弃，别让「不在家」变成每次同步都卡两分钟。 */
+    private val connectTimeoutMs: Int = 10_000,
 ) {
 
-    private val base = baseUrl.trim().trimEnd('/')
+    /** 这个实例连的地址（引擎要拿它回填「上次成功的地址」）。 */
+    val url: String = baseUrl.trim().trimEnd('/')
+
+    private val base = url
 
     fun health(): HealthResponse = decode(
         call(SyncProtocol.PATH_HEALTH, "GET", null),
@@ -94,7 +99,7 @@ class SyncApi(
     ): ByteArray? {
         val connection = (URL(base + path).openConnection() as HttpURLConnection).apply {
             requestMethod = method
-            connectTimeout = 10_000
+            connectTimeout = connectTimeoutMs
             // 首次同步要一口气传几百张图，读超时给宽一点
             readTimeout = 60_000
             instanceFollowRedirects = false
