@@ -174,4 +174,42 @@
     <string name="backup_no_stream">打不开这个文件</string>
     <string name="image_cover_badge">列表图片</string>
     <string name="ingredient_drag_handle">拖动排序</string>
+    <!-- 设置与家庭共享 -->
+    <string name="settings_title">设置</string>
+    <string name="settings_sync_section">家庭共享</string>
+    <string name="settings_sync_intro">在同一台服务端上配对过的设备，菜谱会互相同步。哪天吃了什么（饮食记录）各家自己留着，不同步。</string>
+    <string name="settings_server_label">服务端地址</string>
+    <string name="settings_server_hint">例如 http://192.168.1.10:8080</string>
+    <string name="settings_server_invalid">地址要以 http:// 或 https:// 开头</string>
+    <string name="settings_pair_code_label">配对码</string>
+    <string name="settings_pair_code_hint">六位数字</string>
+    <string name="settings_pair_code_where">配对码写在服务端数据目录的 pair-code.txt 里，每十分钟换一次</string>
+    <string name="settings_device_name_label">这台设备的名字</string>
+    <string name="settings_device_name_hint">同步记录里用它区分是哪台手机改的</string>
+    <string name="settings_device_default">安卓手机</string>
+    <string name="settings_pair_action">配对</string>
+    <string name="settings_pairing">正在配对…</string>
+    <string name="settings_pair_success">配对成功，正在把服务器上的菜谱拉下来</string>
+    <string name="settings_pair_failed">配对没成功：</string>
+    <string name="settings_paired_title">已配对</string>
+    <string name="settings_server_value">服务端：%1$s</string>
+    <string name="settings_last_sync">上次同步：%1$s</string>
+    <string name="settings_never_synced">还没同步过</string>
+    <string name="settings_last_error">上次没成功：%1$s</string>
+    <string name="settings_sync_now">立即同步</string>
+    <string name="settings_syncing">正在同步…</string>
+    <string name="settings_sync_done">同步完成：拉取 %1$d 条，推送 %2$d 条</string>
+    <string name="settings_sync_conflicts">其中 %1$d 道菜两边都改过，各留了一份副本</string>
+    <string name="settings_sync_failed">同步没成功：%1$s</string>
+    <string name="settings_sync_failed_short">同步没成功：</string>
+    <string name="settings_unknown_reason">未知原因</string>
+    <string name="settings_disconnect">断开这台设备</string>
+    <string name="settings_disconnect_title">断开连接？</string>
+    <string name="settings_disconnect_message">断开后不再自动同步，本机的菜谱都留着。要再连回来，重新配对一次就行。</string>
+    <string name="settings_disconnect_confirm">断开</string>
+    <string name="settings_disconnected">已断开，本机的菜谱都留着</string>
+    <string name="settings_sync_note">同步不会删掉你的东西：家人删了一道菜，你这边只是看不到它，你那天吃过什么的记录还在。</string>
+    <!-- 冲突副本提示 -->
+    <string name="conflict_banner_title">有 %1$d 道菜两边都改过</string>
+    <string name="conflict_banner_hint">各留了一份副本，名字后面带「（冲突副本）」。挑一份想要的，另一份删掉即可。</string>
 </resources>

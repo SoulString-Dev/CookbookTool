@@ -12,6 +12,7 @@ import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.DateRange
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Menu
+import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.DrawerValue
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FloatingActionButton
@@ -33,6 +34,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.rememberDrawerState
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -66,6 +68,7 @@ import org.miu.cookbook.ui.recipes.RecipeDetailState
 import org.miu.cookbook.ui.recipes.RecipeListScreen
 import org.miu.cookbook.ui.recipes.edit.ContentEditScreen
 import org.miu.cookbook.ui.recipes.edit.IngredientEditScreen
+import org.miu.cookbook.ui.settings.SyncSettingsScreen
 import org.miu.cookbook.ui.theme.ThemeMode
 
 /** 侧边栏里的两个主界面。 */
@@ -88,6 +91,9 @@ private const val ROUTE_INGREDIENT_EDIT = "recipe/{recipeId}/ingredients"
 
 /** 图片编辑（黑底、可删/加/换序/设封面）。 */
 private const val ROUTE_IMAGE_EDIT = "recipe/{recipeId}/images"
+
+/** 设置（现在只有家庭共享这一节）。它不是主界面，所以不进 [MainDestination]。 */
+private const val ROUTE_SETTINGS = "settings"
 
 /** 做法 / 备注的文本编辑。 */
 private const val ROUTE_CONTENT_EDIT = "recipe/{recipeId}/text/{section}"
@@ -130,6 +136,11 @@ fun CookbookRoot(
     // 顶栏「⋮」里的「多选」：主界面用它进入多选，替掉了原来浮动栏上的编辑图标
     var selectionRequested by remember { mutableStateOf(false) }
 
+    // 开机后自动同步一次（配对过才跑）。失败不打扰：错误留在设置页里，用户想看再去看
+    LaunchedEffect(Unit) {
+        if (container.syncEngine.paired) container.syncEngine.syncNow()
+    }
+
     // 详情页的编辑态与 Markdown 浮窗：顶栏上的按钮要直接改它们，所以状态放在这里，
     // 按 recipeId 记住（在「详情页 → 原料编辑器 → 返回」的来回里一直活着）
     val routeRecipeId = backStackEntry?.arguments?.getLong(ARG_RECIPE_ID) ?: 0L
@@ -146,6 +157,7 @@ fun CookbookRoot(
 
         route == ROUTE_INGREDIENT_EDIT -> stringResource(R.string.section_ingredients)
         route == ROUTE_IMAGE_EDIT -> stringResource(R.string.image_edit_title)
+        route == ROUTE_SETTINGS -> stringResource(R.string.settings_title)
         route == ROUTE_CONTENT_EDIT -> when (sectionName) {
             ContentSection.NOTE.name -> stringResource(R.string.section_notes)
             else -> stringResource(R.string.section_directions)
@@ -186,6 +198,17 @@ fun CookbookRoot(
                         modifier = Modifier.padding(NavigationDrawerItemDefaults.ItemPadding),
                     )
                 }
+                HorizontalDivider(Modifier.padding(horizontal = 28.dp, vertical = 8.dp))
+                NavigationDrawerItem(
+                    label = { Text(stringResource(R.string.settings_title)) },
+                    icon = { Icon(Icons.Filled.Settings, contentDescription = null) },
+                    selected = route == ROUTE_SETTINGS,
+                    onClick = {
+                        scope.launch { drawerState.close() }
+                        if (route != ROUTE_SETTINGS) navController.navigate(ROUTE_SETTINGS)
+                    },
+                    modifier = Modifier.padding(NavigationDrawerItemDefaults.ItemPadding),
+                )
                 Spacer(Modifier.weight(1f))
                 HorizontalDivider(Modifier.padding(horizontal = 28.dp))
                 Text(
@@ -312,6 +335,9 @@ fun CookbookRoot(
                         selectionRequested = selectionRequested,
                         onSelectionRequestedHandled = { selectionRequested = false },
                     )
+                }
+                composable(ROUTE_SETTINGS) {
+                    SyncSettingsScreen(onBack = { navController.popBackStack() })
                 }
                 composable(MainDestination.History.route) {
                     MealHistoryScreen(

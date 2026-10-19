@@ -66,4 +66,19 @@ class CookbookRootSmokeTest {
 
         composeRule.onNodeWithText("还没有饮食记录").assertIsDisplayed()
     }
+
+    @Test
+    fun `侧边栏可以进设置页并看到家庭共享`() {
+        launchApp()
+        composeRule.onNodeWithContentDescription("打开侧边栏").performClick()
+        composeRule.waitForIdle()
+
+        composeRule.onNodeWithText("设置").performSemanticsAction(SemanticsActions.OnClick)
+        composeRule.waitForIdle()
+
+        // 没配对时给的是配对表单：地址、配对码、设备名
+        composeRule.onNodeWithText("家庭共享").assertIsDisplayed()
+        composeRule.onNodeWithText("服务端地址").assertExists()
+        composeRule.onNodeWithText("配对码").assertExists()
+    }
 }

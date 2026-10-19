@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  家里那台 NAS 上的同步服务端跑的是明文 HTTP：局域网内没有证书可用，也不打算给
+  192.168.x.x 签一张。Android 9 起默认禁止明文请求，所以这里显式放开。
+
+  影响面很小：只有用户在「设置」里亲手填过的那个地址才会被连，应用没有别的网络请求；
+  地址填错了也连不到别人家去。将来要是给服务端套上 HTTPS，把这个文件和 manifest 里
+  的 android:networkSecurityConfig 一起删掉即可。
+-->
+<network-security-config>
+    <base-config cleartextTrafficPermitted="true" />
+</network-security-config>

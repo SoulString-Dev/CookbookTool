@@ -171,7 +171,7 @@ thumbs/ab12.jpg        缩略图
 ## 家庭共享的同步服务端
 
 一家人各自的手机各存一份库、各拍各的照，**没有中心服务器就没法共享**。所以有了这一块：
-一个跑在家里 NAS 上的小服务端，外加 App 里的同步引擎（引擎还没做，见「进度」里的 M8）。
+一个跑在家里 NAS 上的小服务端，加上 App 里的同步引擎与设置页（M8 已完成）。
 
 三个模块的分工：
 
@@ -181,7 +181,9 @@ thumbs/ab12.jpg        缩略图
 - `:sync-server` —— 服务端。**零第三方框架**：HTTP 用 JDK 自带的 `com.sun.net.httpserver`，
   数据库用 `sqlite-jdbc`，JSON 复用 kotlinx-serialization（这台开发机拉不到 Ktor/Netty 之类
   的新依赖，家用 NAS 上其实也不需要）。
-- `app` —— 同步引擎与设置页（M8 才写）。
+- `app`（`data/sync/`）—— 同步引擎：`SyncCredentials`（令牌存 SharedPreferences）、
+  `SyncApi`（`HttpURLConnection`，不引 OkHttp）、`SyncStore`（库 ↔ 线上载荷的双向转换）、
+  `SyncEngine`（拉 → 推 → 再拉一轮）。设置页在侧边栏「设置」里。
 
 一键自检（起一个临时实例，真用 curl 走完整流程，跑完自动清理）：
 
@@ -231,6 +233,31 @@ cd deploy && docker compose up -d --build  # 数据落在 deploy/data/
   可能要传几百张）。配对接口按来源 IP 限流——**只有来源地址在可信反代名单里才认
   `X-Forwarded-For`**，否则伪造一个头就绕过去了。
 
+### 手机上怎么用
+
+装好 App 后，侧边栏 →「设置」→ 家庭共享：
+
+1. 服务端地址填局域网地址，例如 `http://192.168.1.10:8080`（别填 `127.0.0.1`，那是手机自己）；
+2. 配对码填服务端 `data/pair-code.txt` 里的那六位（每十分钟换一次，用过即换）；
+3. 点「配对」。配完自动拉一次，之后每次打开应用也会自动同步一次，设置页里另有「立即同步」。
+
+同步范围与边界（都是刻意选的）：
+
+- **同步的是菜谱**：菜名、分类、原料、做法/备注、图片。**饮食记录不同步**——哪天吃了什么是各家的私事。
+- 两边都改过同一道菜时两边各留一份：晚改的保留原名，早改的变成「××（冲突副本）」。
+  首页顶上有一条提示，删掉不要的那份它就自己消失了。
+- 服务端的令牌放普通 SharedPreferences（manifest 已经是 `allowBackup="false"`，adb 与云备份都拿不到）。
+  这台开发机拉不到 `androidx.security`，所以没有用 EncryptedSharedPreferences。
+- **没有 WorkManager**（`androidx.work` 同样拉不到），后台同步只有「打开应用时」和「手动」两档。
+  菜谱本来也不需要秒级同步，真正的定时同步留给以后要加的时候再说。
+- 图片按内容寻址存成 `images/<sha256>.jpg`：同一张图被两道菜用到只存一份，换台设备路径也依然有效。
+  v2 时代的老图第一次同步前补算哈希。删图时**不删磁盘文件**（可能还有别的菜引用同一份内容），
+  孤儿文件暂时不回收。
+- 局域网明文 HTTP 要在 `res/xml/network_security_config.xml` 里放行——`targetSdk 35` 默认禁明文。
+  公网暴露时请套反代上 HTTPS（服务端认 `X-Forwarded-For` 只信可信来源，见下）。
+- 导入备份会把同步游标一起清掉（整库替换）。已配对时导入完会自动重拉、再推一遍本地，
+  两边都改过的那几道菜会各留一份副本——这是可以接受的，覆盖导入本来就该谨慎用。
+
 ## 几条界面约定
 
 - **顶栏常驻**：进详情页、进任何一个子编辑器，顶栏都不消失也不换行（那样点进点出会
@@ -276,10 +303,11 @@ cd deploy && docker compose up -d --build  # 数据落在 deploy/data/
 
 - **真机验证过一轮**（Android 8.0+ 装得上、侧边栏能点、模糊搜索与 SAF 跳转正常）。
   这台开发机没有 `/dev/kvm`，起不了模拟器，所以剩下的触摸细节、系统相机、Photo Picker
-  还是只能装到手机上试。116 个 JVM 单测覆盖了领域逻辑、Room 读写、备份 zip 和主要界面
-  （Robolectric 里跑 Compose），其中 6 个是 v1→v2 的数据库迁移测试
-  （自己造一个 v1 库再让 Room 升上来，数据没丢、且迁移出的表结构 Room 认）；另有 15 个
-  服务端测试（`bash scripts/build.sh :sync-server:test`，真起进程内 HTTP 服务）。**侧边栏条目的点击在 Robolectric 里不正常**（触摸会被抽屉
+  还是只能装到手机上试。126 个 JVM 单测覆盖了领域逻辑、Room 读写、备份 zip、同步引擎和主要界面
+  （Robolectric 里跑 Compose），其中 8 个是数据库迁移测试（v1→v2→v3：自己造一个老版本的库
+  再让 Room 升上来，数据没丢、且迁移出的表结构 Room 认），7 个是同步引擎的端到端测试
+  （**进程内起一个真服务端**，用两套独立的库假装两台手机）；另有 16 个服务端测试
+  （`bash scripts/build.sh :sync-server:test`，真起进程内 HTTP 服务）。**侧边栏条目的点击在 Robolectric 里不正常**（触摸会被抽屉
   蒙版吃掉，怀疑是测试环境的问题），这个在真机上确认是好的。
 - **Robolectric 里不要测"弹窗里带输入框"的流程**：`AlertDialog` 里只要放 `OutlinedTextField`，
   Compose 就永远 idle 不下来（`AppNotIdleException`，有时直接 OOM）。带输入框的弹窗只能人工验。
@@ -307,6 +335,11 @@ cd deploy && docker compose up -d --build  # 数据落在 deploy/data/
   HTTP 用 JDK 自带的 `com.sun.net.httpserver`、库用 sqlite-jdbc（这台开发机拉不到 Ktor，
   家用 NAS 上也不需要）。15 个服务端测试（真起进程内 HTTP 服务、真发请求）+
   `scripts/sync-server-check.sh`（curl 全流程自检）+ `deploy/` 的 Dockerfile 与 compose
+- [x] **M8** App 端同步引擎与设置页：Room v2→v3（`recipe_image` 加 `sha256`/`thumb_sha256`，
+  老图惰性补算）、`data/sync/` 四个类（令牌、HTTP、库↔载荷转换、编排）、设置页（配对/状态/
+  立即同步/断开）、首页冲突副本提示条；**推完必须再拉一轮**（水位只靠拉取推进，否则会把自己
+  刚推上去的记录当成别人的改动、越同步越假冲突）、按 uuid 原地更新保住本机 id（不触发外键级联
+  删掉饮食记录与图片行）、图片按内容寻址落地；16 个服务端测试里多了一条「重推不会造第二个副本」
 - [x] **真机反馈后的第一轮修改**：修掉"拍照/相册导入一律失败"（`decodeStream` 在
       `inJustDecodeBounds` 时返回 null，不能拿它的返回值判成败）；历史改餐可改到任意
       一天任意一餐（`moveSlotTo`）；弹窗里加日历选日期；返回键逐层退出模式；新建食谱

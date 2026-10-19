@@ -147,7 +147,7 @@ data class RecipeCategoryCrossRef(
             onDelete = ForeignKey.CASCADE,
         ),
     ],
-    indices = [Index("recipe_id")],
+    indices = [Index("recipe_id"), Index("sha256"), Index("thumb_sha256")],
 )
 data class RecipeImageEntity(
     @PrimaryKey(autoGenerate = true) val id: Long = 0,
@@ -156,6 +156,14 @@ data class RecipeImageEntity(
     val path: String,
     /** 列表用小图路径 */
     @ColumnInfo(name = "thumb_path") val thumbPath: String,
+    /**
+     * 图片内容的 sha256（v3 才加）。同步时**只认哈希不认路径**：路径换台设备就失效了。
+     *
+     * 存量行是空的，同步时惰性补上（哈希要读一遍文件，放在每次保存时算最省事）；
+     * 空哈希的行不上传——宁可少一张图，也不要传一个服务端对不上的引用。
+     */
+    @ColumnInfo(defaultValue = "") val sha256: String = "",
+    @ColumnInfo(name = "thumb_sha256", defaultValue = "") val thumbSha256: String = "",
     val width: Int = 0,
     val height: Int = 0,
     @ColumnInfo(name = "sort_order") val sortOrder: Int,

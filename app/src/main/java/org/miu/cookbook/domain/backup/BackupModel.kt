@@ -90,6 +90,12 @@ data class BackupImage(
     val height: Int = 0,
     val sortOrder: Int = 0,
     val isCover: Boolean = false,
+    /**
+     * 内容哈希（v3 才加，旧备份里没有）。放在最后、给默认值，
+     * 这样旧的备份文件照样能导进来（[BackupCodec] 那边只增不减字段才安全）。
+     */
+    val sha256: String = "",
+    val thumbSha256: String = "",
 )
 
 @Serializable

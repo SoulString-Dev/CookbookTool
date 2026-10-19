@@ -2,6 +2,7 @@ package org.miu.cookbook.ui.recipes
 
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
+import androidx.compose.ui.draw.clip
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -13,6 +14,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -21,6 +23,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.List
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.HorizontalDivider
@@ -90,6 +93,7 @@ fun RecipeListScreen(
     val focusManager = LocalFocusManager.current
 
     val rows by repository.recipeList.collectAsStateWithLifecycle(initialValue = emptyList())
+    val conflictCount by repository.conflictCopies.collectAsStateWithLifecycle(initialValue = 0)
     val allItems = remember(rows) { rows.map { it.toListItem(container.filesDir) } }
 
     var query by remember { mutableStateOf("") }
@@ -175,6 +179,10 @@ fun RecipeListScreen(
                 modifier = Modifier.fillMaxSize(),
                 contentPadding = PaddingValues(top = TopBarArea, bottom = 96.dp),
             ) {
+                // 冲突副本提示：同步时两边都改了同一道菜才会出现，点不掉，删掉副本它自己消失
+                if (conflictCount > 0 && query.isBlank()) {
+                    item(key = "conflicts") { ConflictBanner(count = conflictCount) }
+                }
                 if (query.isNotBlank()) {
                     item(key = "count") {
                         Text(
@@ -591,6 +599,44 @@ private fun RecordCandidateRow(item: RecipeListItem, onClick: () -> Unit) {
                     overflow = TextOverflow.Ellipsis,
                 )
             }
+        }
+    }
+}
+
+/**
+ * 首页顶部的冲突提示。
+ *
+ * 不做「一键解决」按钮：哪一份是想要的只有人知道。这里只负责让人发现它存在，
+ * 副本本身在列表里（名字带「（冲突副本）」），点进去比对、删掉不要的那份即可。
+ */
+@Composable
+private fun ConflictBanner(count: Int) {
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 16.dp, vertical = 6.dp)
+            .clip(RoundedCornerShape(14.dp))
+            .background(MaterialTheme.colorScheme.surfaceContainerHigh)
+            .padding(horizontal = 14.dp, vertical = 10.dp),
+    ) {
+        Icon(
+            imageVector = Icons.Filled.Info,
+            contentDescription = null,
+            tint = MaterialTheme.colorScheme.error,
+            modifier = Modifier.size(20.dp),
+        )
+        Spacer(Modifier.width(10.dp))
+        Column {
+            Text(
+                text = stringResource(R.string.conflict_banner_title, count),
+                style = MaterialTheme.typography.bodyMedium,
+            )
+            Text(
+                text = stringResource(R.string.conflict_banner_hint),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
         }
     }
 }

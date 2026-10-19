@@ -208,6 +208,27 @@ class ServerTest {
     }
 
     @Test
+    fun `同一批推送重发不会造出第二个冲突副本`() {
+        val a = pair("甲")
+        val b = pair("乙")
+        push(a.token, PushRequest(a.deviceId, 0, listOf(PushUpsert("r-1", 1000, recipe("原来的", 1000)))))
+
+        // 乙拿着更旧的版本推（服务端赢），随后**原样重发同一批**（模拟响应丢了之后的重试）
+        val request = PushRequest(b.deviceId, 0, listOf(PushUpsert("r-1", 900, recipe("乙的旧版", 900))))
+        val first = push(b.token, request)
+        val second = push(b.token, request)
+
+        assertEquals(first.conflicts[0].copyUuid, second.conflicts[0].copyUuid)
+
+        // 服务端总共只该有一份带后缀的副本
+        val all = pull(a.token, 0).recipes
+        assertEquals(
+            listOf("乙的旧版（冲突副本）"),
+            all.filter { it.payload?.title?.endsWith("（冲突副本）") == true }.map { it.payload?.title },
+        )
+    }
+
+    @Test
     fun `删除会变成墓碑，别的设备拉得到`() {
         val a = pair("甲")
         val b = pair("乙")

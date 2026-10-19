@@ -8,6 +8,8 @@ import org.miu.cookbook.data.db.CategoryDao
 import org.miu.cookbook.data.db.MealLogDao
 import org.miu.cookbook.data.db.RecipeDao
 import org.miu.cookbook.data.db.RecipeImageDao
+import org.miu.cookbook.data.sync.SyncCredentials
+import org.miu.cookbook.data.sync.SyncEngine
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -29,6 +31,14 @@ class AppContainer(context: Context) {
 
     val repository: CookbookRepository by lazy {
         CookbookRepository(database, filesDir)
+    }
+
+    /** 配对令牌（放 SharedPreferences，不进备份、不被 clearAllTables 清掉）。 */
+    val syncCredentials: SyncCredentials by lazy { SyncCredentials(appContext) }
+
+    /** 家庭共享的同步引擎。设置页、首页提示、进前台时的自动同步都从这里拿。 */
+    val syncEngine: SyncEngine by lazy {
+        SyncEngine(database, repository, filesDir, syncCredentials)
     }
 
     /**

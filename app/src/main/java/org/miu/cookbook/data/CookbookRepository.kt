@@ -38,6 +38,7 @@ import org.miu.cookbook.domain.backup.BackupIngredient
 import org.miu.cookbook.domain.backup.BackupMealLog
 import org.miu.cookbook.domain.backup.BackupRecipe
 import org.miu.cookbook.domain.meal.MealSlot
+import org.miu.cookbook.sync.model.SyncProtocol
 import org.miu.cookbook.domain.recipe.ContentLine
 import org.miu.cookbook.domain.recipe.ContentOutline
 import org.miu.cookbook.domain.recipe.IngredientLine
@@ -280,6 +281,8 @@ class CookbookRepository(
                 thumbPath = imported.thumbPath,
                 width = imported.width,
                 height = imported.height,
+                sha256 = imported.sha256,
+                thumbSha256 = imported.thumbSha256,
                 sortOrder = count,
                 isCover = count == 0,
             ),
@@ -339,6 +342,9 @@ class CookbookRepository(
 
     /** 同步游标（库里只有一行）。 */
     val syncState: Flow<SyncStateEntity?> = syncStateDao.observe()
+
+    /** 冲突副本条数：首页顶部据此提示「有几道菜在两边都改过」。 */
+    val conflictCopies: Flow<Int> = recipeDao.observeConflictCopies(SyncProtocol.CONFLICT_SUFFIX)
 
     suspend fun currentSyncState(): SyncStateEntity? = io { syncStateDao.get() }
 
@@ -451,6 +457,8 @@ class CookbookRepository(
                             height = it.height,
                             sortOrder = it.sortOrder,
                             isCover = it.isCover,
+                            sha256 = it.sha256,
+                            thumbSha256 = it.thumbSha256,
                         )
                     },
                 )
@@ -551,6 +559,9 @@ class CookbookRepository(
                             }.orEmpty(),
                             width = it.width,
                             height = it.height,
+                            // 旧备份里没有哈希（字段默认空串），同步前会惰性补算
+                            sha256 = it.sha256,
+                            thumbSha256 = it.thumbSha256,
                             sortOrder = it.sortOrder,
                             isCover = it.isCover,
                         )

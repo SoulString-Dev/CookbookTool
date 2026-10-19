@@ -119,6 +119,46 @@ class MigrationTest {
     }
 
     @Test
+    fun `v2 的图片行迁移后有哈希列，老图留空等着补算`() {
+        val db = migrateFromV2(seedV2Data())
+
+        val rows = db.rows("SELECT path, sha256, thumb_sha256 FROM recipe_image ORDER BY id") {
+            Triple(it.getString(0), it.getString(1), it.getString(2))
+        }
+        assertEquals(1, rows.size)
+        assertEquals("images/a.jpg", rows.single().first)
+        // 老数据没有哈希：留空，等第一次同步前补算（不在这里扫盘，迁移要快）
+        assertEquals("", rows.single().second)
+        assertEquals("", rows.single().third)
+
+        // 两个新索引都建好了（同步时要按 sha256 找「这张图本地有没有」）
+        val names = db.namesIn("SELECT name FROM sqlite_master WHERE type = 'index'")
+        assertTrue(names.contains("index_recipe_image_sha256"))
+        assertTrue(names.contains("index_recipe_image_thumb_sha256"))
+
+        // 补算之后能写回（NOT NULL DEFAULT '' 的列，写字符串没问题）
+        db.openHelper.writableDatabase.execSQL(
+            "UPDATE recipe_image SET sha256 = 'abc', thumb_sha256 = 'def' WHERE id = 1",
+        )
+        val updated = db.rows("SELECT sha256 FROM recipe_image WHERE id = 1") { it.getString(0) }
+        assertEquals(listOf("abc"), updated)
+    }
+
+    @Test
+    fun `v2 升级到 v3 时食谱、分类和图片一条不少`() {
+        val db = migrateFromV2(seedV2Data())
+        val recipes = runBlocking { db.recipeDao().observeAllWithDetails().first() }
+        assertEquals(listOf("红烧肉"), recipes.map { it.recipe.title })
+        assertEquals("uuid-of-recipe", recipes.single().recipe.uuid)
+        assertEquals("家常菜", recipes.single().categories.single().name)
+        assertEquals("images/a.jpg", recipes.single().images.single().path)
+        // 同步游标表也还在（v2 就有的东西，别在迁移里弄丢）
+        val state = runBlocking { db.syncStateDao().get() }
+        assertNotNull(state)
+        assertEquals(7L, state!!.lastRev)
+    }
+
+    @Test
     fun `唯一索引真的拦得住重复 uuid`() {
         val db = migrate(seedV1Data())
         val existing = runBlocking {
@@ -144,7 +184,7 @@ class MigrationTest {
     private fun migrate(seed: SupportSQLiteDatabase.() -> Unit): AppDatabase {
         createV1Database(seed)
         return Room.databaseBuilder(context, AppDatabase::class.java, dbName)
-            .addMigrations(MIGRATION_1_2)
+            .addMigrations(MIGRATION_1_2, MIGRATION_2_3)
             .allowMainThreadQueries()
             .build()
             .also { migrated = it }
@@ -167,6 +207,54 @@ class MigrationTest {
             // 第一次取 writableDatabase 才会触发 onCreate
             helper.writableDatabase
         }
+    }
+
+    /** v2 的库升到 v3：这次要同时挂两个迁移，Room 只会跑 2 → 3。 */
+    private fun migrateFromV2(seed: SupportSQLiteDatabase.() -> Unit): AppDatabase {
+        createV2Database(seed)
+        return Room.databaseBuilder(context, AppDatabase::class.java, dbName)
+            .addMigrations(MIGRATION_1_2, MIGRATION_2_3)
+            .allowMainThreadQueries()
+            .build()
+            .also { migrated = it }
+    }
+
+    private fun createV2Database(seed: SupportSQLiteDatabase.() -> Unit) {
+        val callback = object : SupportSQLiteOpenHelper.Callback(2) {
+            override fun onCreate(db: SupportSQLiteDatabase) {
+                V2_SCHEMA.forEach(db::execSQL)
+                db.seed()
+            }
+
+            override fun onUpgrade(db: SupportSQLiteDatabase, oldVersion: Int, newVersion: Int) = Unit
+        }
+        val config = SupportSQLiteOpenHelper.Configuration.builder(context)
+            .name(dbName)
+            .callback(callback)
+            .build()
+        FrameworkSQLiteOpenHelperFactory().create(config).use { helper ->
+            helper.writableDatabase
+        }
+    }
+
+    private fun seedV2Data(): SupportSQLiteDatabase.() -> Unit = {
+        execSQL(
+            "INSERT INTO recipe (id, uuid, title, created_at, updated_at, deleted_at, dirty, server_rev) " +
+                "VALUES ($RED_BRAISED, 'uuid-of-recipe', '红烧肉', 100, 200, 0, 0, 3)",
+        )
+        execSQL(
+            "INSERT INTO category (id, uuid, name, sort_order) " +
+                "VALUES (1, 'uuid-of-category', '家常菜', 0)",
+        )
+        execSQL("INSERT INTO recipe_category (recipe_id, category_id) VALUES ($RED_BRAISED, 1)")
+        execSQL(
+            "INSERT INTO recipe_image (id, recipe_id, path, thumb_path, width, height, sort_order, is_cover) " +
+                "VALUES (1, $RED_BRAISED, 'images/a.jpg', 'thumbs/a.jpg', 10, 10, 0, 1)",
+        )
+        execSQL(
+            "INSERT INTO sync_state (id, device_id, server_url, last_rev, last_sync_at, last_error) " +
+                "VALUES (1, 'dev-1', 'http://192.168.1.2:8080', 7, 1000, '')",
+        )
     }
 
     private fun seedV1Data(): SupportSQLiteDatabase.() -> Unit = {
@@ -218,6 +306,51 @@ class MigrationTest {
          * v1 的建表语句，**逐字**抄自 `app/schemas/org.miu.cookbook.data.db.AppDatabase/1.json`。
          * 这是「已经装在别人手机上的那个版本」的样子，永远不要跟着现在的代码改。
          */
+        val V2_SCHEMA = listOf(
+            "CREATE TABLE IF NOT EXISTS `recipe` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, " +
+                "`uuid` TEXT NOT NULL DEFAULT '', `title` TEXT NOT NULL, `created_at` INTEGER NOT NULL, " +
+                "`updated_at` INTEGER NOT NULL, `deleted_at` INTEGER NOT NULL DEFAULT 0, " +
+                "`dirty` INTEGER NOT NULL DEFAULT 1, `server_rev` INTEGER NOT NULL DEFAULT 0)",
+            "CREATE TABLE IF NOT EXISTS `content_block` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, " +
+                "`recipe_id` INTEGER NOT NULL, `section` TEXT NOT NULL, `kind` TEXT NOT NULL, " +
+                "`level` INTEGER NOT NULL, `text` TEXT NOT NULL, `sort_order` INTEGER NOT NULL, " +
+                "FOREIGN KEY(`recipe_id`) REFERENCES `recipe`(`id`) ON UPDATE NO ACTION ON DELETE CASCADE )",
+            "CREATE TABLE IF NOT EXISTS `ingredient` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, " +
+                "`recipe_id` INTEGER NOT NULL, `name` TEXT NOT NULL, `amount` TEXT NOT NULL, " +
+                "`unit` TEXT NOT NULL, `sort_order` INTEGER NOT NULL, " +
+                "FOREIGN KEY(`recipe_id`) REFERENCES `recipe`(`id`) ON UPDATE NO ACTION ON DELETE CASCADE )",
+            "CREATE TABLE IF NOT EXISTS `category` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, " +
+                "`uuid` TEXT NOT NULL DEFAULT '', `name` TEXT NOT NULL, `sort_order` INTEGER NOT NULL)",
+            "CREATE TABLE IF NOT EXISTS `recipe_category` (`recipe_id` INTEGER NOT NULL, " +
+                "`category_id` INTEGER NOT NULL, PRIMARY KEY(`recipe_id`, `category_id`), " +
+                "FOREIGN KEY(`recipe_id`) REFERENCES `recipe`(`id`) ON UPDATE NO ACTION ON DELETE CASCADE , " +
+                "FOREIGN KEY(`category_id`) REFERENCES `category`(`id`) ON UPDATE NO ACTION ON DELETE CASCADE )",
+            "CREATE TABLE IF NOT EXISTS `recipe_image` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, " +
+                "`recipe_id` INTEGER NOT NULL, `path` TEXT NOT NULL, `thumb_path` TEXT NOT NULL, " +
+                "`width` INTEGER NOT NULL, `height` INTEGER NOT NULL, `sort_order` INTEGER NOT NULL, " +
+                "`is_cover` INTEGER NOT NULL, " +
+                "FOREIGN KEY(`recipe_id`) REFERENCES `recipe`(`id`) ON UPDATE NO ACTION ON DELETE CASCADE )",
+            "CREATE TABLE IF NOT EXISTS `meal_log` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, " +
+                "`epoch_day` INTEGER NOT NULL, `slot` TEXT NOT NULL, `recipe_id` INTEGER NOT NULL, " +
+                "`created_at` INTEGER NOT NULL, " +
+                "FOREIGN KEY(`recipe_id`) REFERENCES `recipe`(`id`) ON UPDATE NO ACTION ON DELETE CASCADE )",
+            "CREATE TABLE IF NOT EXISTS `sync_state` (`id` INTEGER NOT NULL, `device_id` TEXT NOT NULL, " +
+                "`server_url` TEXT NOT NULL, `last_rev` INTEGER NOT NULL, " +
+                "`last_sync_at` INTEGER NOT NULL, `last_error` TEXT NOT NULL, PRIMARY KEY(`id`))",
+            "CREATE UNIQUE INDEX IF NOT EXISTS `index_recipe_uuid` ON `recipe` (`uuid`)",
+            "CREATE INDEX IF NOT EXISTS `index_content_block_recipe_id` ON `content_block` (`recipe_id`)",
+            "CREATE INDEX IF NOT EXISTS `index_ingredient_recipe_id` ON `ingredient` (`recipe_id`)",
+            "CREATE UNIQUE INDEX IF NOT EXISTS `index_category_name` ON `category` (`name`)",
+            "CREATE UNIQUE INDEX IF NOT EXISTS `index_category_uuid` ON `category` (`uuid`)",
+            "CREATE INDEX IF NOT EXISTS `index_recipe_category_category_id` ON `recipe_category` (`category_id`)",
+            "CREATE INDEX IF NOT EXISTS `index_recipe_image_recipe_id` ON `recipe_image` (`recipe_id`)",
+            "CREATE INDEX IF NOT EXISTS `index_meal_log_recipe_id` ON `meal_log` (`recipe_id`)",
+            "CREATE INDEX IF NOT EXISTS `index_meal_log_epoch_day_slot` ON `meal_log` (`epoch_day`, `slot`)",
+            "CREATE TABLE IF NOT EXISTS room_master_table (id INTEGER PRIMARY KEY, identity_hash TEXT)",
+            "INSERT OR REPLACE INTO room_master_table (id, identity_hash) " +
+                "VALUES(42, 'e3a08decddf164f5ca44e36ddc230223')",
+        )
+
         val V1_SCHEMA = listOf(
             "CREATE TABLE IF NOT EXISTS `recipe` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, " +
                 "`title` TEXT NOT NULL, `created_at` INTEGER NOT NULL, `updated_at` INTEGER NOT NULL)",

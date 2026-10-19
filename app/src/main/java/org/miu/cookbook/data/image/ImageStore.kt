@@ -9,6 +9,7 @@ import androidx.exifinterface.media.ExifInterface
 import java.io.File
 import java.io.FileOutputStream
 import java.io.InputStream
+import java.security.MessageDigest
 import java.util.UUID
 import kotlin.math.roundToInt
 
@@ -18,6 +19,12 @@ data class ImportedImage(
     val thumbPath: String,
     val width: Int,
     val height: Int,
+    /**
+     * 内容哈希（v3 起算）。同步**只认哈希不认路径**：路径换台设备就失效了。
+     * 算不出来时是空串——图照样能看能导，只是不会被上传（宁可少一张图，也不要传一个对不上的引用）。
+     */
+    val sha256: String = "",
+    val thumbSha256: String = "",
 )
 
 /**
@@ -71,6 +78,25 @@ object ImageStore {
             runCatching { File(baseDir, thumbPath).delete() }
         }
     }
+
+    /**
+     * 算一个文件的 sha256（流式读，别把几十兆的图整个塞进内存）。
+     *
+     * 同步靠它做内容寻址：同一张图被两道菜引用、或者两台设备各拍了一张一样的图，
+     * 服务端都只存一份。读不出来（文件被删/没权限）返回 null，调用方当「这张图传不了」处理。
+     */
+    fun sha256Of(file: File): String? = runCatching {
+        val digest = MessageDigest.getInstance("SHA-256")
+        file.inputStream().use { input ->
+            val buffer = ByteArray(64 * 1024)
+            while (true) {
+                val read = input.read(buffer)
+                if (read < 0) break
+                if (read > 0) digest.update(buffer, 0, read)
+            }
+        }
+        digest.digest().joinToString("") { "%02x".format(it) }
+    }.getOrNull()
 
     /**
      * 只读尺寸。**注意 `inJustDecodeBounds = true` 时 `decodeStream` 的返回值就是 null**，
@@ -154,6 +180,8 @@ object ImageStore {
                 thumbPath = "$THUMB_DIR/$name",
                 width = targetWidth,
                 height = targetHeight,
+                sha256 = sha256Of(imageFile).orEmpty(),
+                thumbSha256 = sha256Of(thumbFile).orEmpty(),
             )
         } catch (t: Throwable) {
             // 正图写出来了、缩略图没写出来这种半成品要收干净，别留孤儿文件

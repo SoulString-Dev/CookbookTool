@@ -51,6 +51,23 @@ val MIGRATION_1_2 = object : Migration(1, 2) {
 }
 
 /**
+ * v2 → v3：图片改按内容寻址，为同步做准备。
+ *
+ * 只加两列和两个索引，不改任何既有行的语义：存量行的 `sha256` 是空串，
+ * 等同步时惰性补算（要读一遍文件才算得出来，放在迁移里做会让升级卡住）。
+ * **空哈希的图片不上传**，宁可少一张图也不要传一个服务端对不上的引用。
+ */
+val MIGRATION_2_3 = object : Migration(2, 3) {
+
+    override fun migrate(db: SupportSQLiteDatabase) {
+        db.execSQL("ALTER TABLE recipe_image ADD COLUMN sha256 TEXT NOT NULL DEFAULT ''")
+        db.execSQL("ALTER TABLE recipe_image ADD COLUMN thumb_sha256 TEXT NOT NULL DEFAULT ''")
+        db.execSQL("CREATE INDEX IF NOT EXISTS index_recipe_image_sha256 ON recipe_image (sha256)")
+        db.execSQL("CREATE INDEX IF NOT EXISTS index_recipe_image_thumb_sha256 ON recipe_image (thumb_sha256)")
+    }
+}
+
+/**
  * 这张表的 DDL 必须和 Room 为 v2 生成的**逐字一致**（列名、顺序、NOT NULL），
  * 否则 Room 打开库时校验 schema 会直接抛「Migration didn't properly handle」。
  * 内容抄自 `app/schemas/…/2.json` 的 createSql。

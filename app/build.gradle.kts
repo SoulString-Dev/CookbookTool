@@ -118,6 +118,9 @@ dependencies {
     implementation(libs.androidx.exifinterface)
     implementation(libs.kotlinx.serialization.json)
 
+    // 家庭共享的线上格式（App 与服务端共用一份 DTO，避免两端各写各的）
+    implementation(project(":sync-model"))
+
     testImplementation(libs.junit)
     testImplementation(libs.kotlinx.coroutines.test)
     testImplementation(libs.robolectric)
@@ -126,5 +129,7 @@ dependencies {
     // Robolectric 里也能跑 Compose UI 测试：没有真机/模拟器时这是唯一的自动化 UI 验证手段
     testImplementation(platform(libs.androidx.compose.bom))
     testImplementation(libs.androidx.compose.ui.test.junit4)
+    // 端到端同步测试直接起一个真的服务端（进程内随机端口），比手写假服务端可信得多
+    testImplementation(project(":sync-server"))
     debugImplementation(libs.androidx.compose.ui.test.manifest)
 }

@@ -76,6 +76,35 @@ abstract class RecipeDao {
     @Query("UPDATE recipe SET deleted_at = :deletedAt, updated_at = :deletedAt, dirty = 0 WHERE id = :id")
     abstract suspend fun applyRemoteTombstone(id: Long, deletedAt: Long)
 
+    // ---------- 同步引擎用的几把尺子 ----------
+
+    /** 待上传的行（**含墓碑**：家人那边也得知道这道菜没了）。按改动时间排队，先改的先走。 */
+    @Query("SELECT * FROM recipe WHERE dirty = 1 ORDER BY updated_at, id")
+    abstract suspend fun allDirty(): List<RecipeEntity>
+
+    /** 同步打包用的两份明细（按展示顺序）。 */
+    @Query("SELECT * FROM ingredient WHERE recipe_id = :recipeId ORDER BY sort_order, id")
+    abstract suspend fun ingredientsFor(recipeId: Long): List<IngredientEntity>
+
+    @Query("SELECT * FROM content_block WHERE recipe_id = :recipeId ORDER BY section, sort_order, id")
+    abstract suspend fun contentFor(recipeId: Long): List<ContentBlockEntity>
+
+    /**
+     * 推送成功后清脏，并记下服务端给的版本号。
+     *
+     * **条件里带着 `updated_at`**：推送这一来一回要几秒，用户完全可能在这期间又改了这道菜。
+     * 那时服务端回的 rev 对应的是旧正文，脏标记必须留着——不然这次改动就永远不上传了。
+     */
+    @Query("UPDATE recipe SET dirty = 0, server_rev = :serverRev WHERE uuid = :uuid AND updated_at = :updatedAt")
+    abstract suspend fun clearDirtyIfUnchanged(uuid: String, updatedAt: Long, serverRev: Long)
+
+    /**
+     * 冲突副本的条数（服务端给败方菜名加了后缀）。首页顶部用它提示用户去处理。
+     * 按菜名匹配是**故意从简**：副本没有别的标记位，而 `server_rev` 在客户端没有可比性。
+     */
+    @Query("SELECT COUNT(*) FROM recipe WHERE deleted_at = 0 AND title LIKE '%' || :suffix || '%'")
+    abstract fun observeConflictCopies(suffix: String): Flow<Int>
+
     // ---------- 原料 / 做法备注：整体替换 ----------
     //
     // 编辑界面是「改完一整份再存」，所以这里就按整份替换写：
@@ -175,6 +204,10 @@ interface CategoryDao {
 
     @Query("DELETE FROM recipe_category WHERE recipe_id = :recipeId AND category_id = :categoryId")
     suspend fun unlink(recipeId: Long, categoryId: Long)
+
+    /** 同步落地时整组换分类（远端载荷里就是完整的一组）。 */
+    @Query("DELETE FROM recipe_category WHERE recipe_id = :recipeId")
+    suspend fun unlinkAll(recipeId: Long)
 
     @Query("SELECT category_id FROM recipe_category WHERE recipe_id = :recipeId")
     suspend fun linkedCategoryIds(recipeId: Long): List<Long>
@@ -342,6 +375,24 @@ interface RecipeImageDao {
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertAll(items: List<RecipeImageEntity>)
+
+    // ---------- 同步：按内容哈希找文件和回填 ----------
+
+    /** 按内容哈希找一张原图。空哈希不算命中（存量行还没回填，拿它去比对会误伤）。 */
+    @Query("SELECT * FROM recipe_image WHERE sha256 = :sha256 AND sha256 != '' LIMIT 1")
+    suspend fun findBySha256(sha256: String): RecipeImageEntity?
+
+    /** 按内容哈希找一张缩略图。 */
+    @Query("SELECT * FROM recipe_image WHERE thumb_sha256 = :sha256 AND thumb_sha256 != '' LIMIT 1")
+    suspend fun findByThumbSha256(sha256: String): RecipeImageEntity?
+
+    /** 回填哈希（存量图片第一次同步时补算）。 */
+    @Query("UPDATE recipe_image SET sha256 = :sha256, thumb_sha256 = :thumbSha256 WHERE id = :imageId")
+    suspend fun updateHashes(imageId: Long, sha256: String, thumbSha256: String)
+
+    /** 还没算哈希的行（每次同步前扫一遍，量级是几百行，够用）。 */
+    @Query("SELECT * FROM recipe_image WHERE sha256 = '' OR thumb_sha256 = ''")
+    suspend fun allMissingHashes(): List<RecipeImageEntity>
 }
 
 @Dao

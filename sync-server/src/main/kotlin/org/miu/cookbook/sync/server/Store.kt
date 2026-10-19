@@ -377,13 +377,26 @@ class Store(dataDir: File) : AutoCloseable {
      * 把「败方」存成新 uuid 的副本，菜名加后缀。载荷解析不了就原样存（宁可留个坏副本，也别把用户的内容丢了）。
      */
     private fun insertCopy(loserPayload: String, loserUpdatedAt: Long, deviceId: String, now: Long): SyncRecord {
-        val uuid = UUID.randomUUID().toString()
         val payload = renameForCopy(loserPayload)
+
+        // 重推保护：请求在服务端处理完之后断线，客户端会把一模一样的一批再发一次。
+        // 上一轮已经为同一份内容建过副本的话，把它原样还回去——否则每次重试都多一个副本。
+        findExistingCopy(payload, loserUpdatedAt, deviceId)?.let { return it }
+
+        val uuid = UUID.randomUUID().toString()
         val rev = nextRev()
         insert(uuid, rev, deleted = false, updatedAt = loserUpdatedAt, payload = payload, deviceId = deviceId, now = now)
         val parsed = runCatching { SyncJson.decodePayload(payload) }.getOrNull()
         return SyncRecord(uuid, rev, false, loserUpdatedAt, parsed)
     }
+
+    /** 找同一台设备、同一时间戳、同一内容的既有副本（重推时用）。 */
+    private fun findExistingCopy(payload: String, loserUpdatedAt: Long, deviceId: String): SyncRecord? =
+        query(
+            "SELECT uuid, server_rev, deleted, updated_at, payload FROM recipe " +
+                "WHERE deleted = 0 AND origin_dev = ? AND updated_at = ? AND payload = ? LIMIT 1",
+            deviceId, loserUpdatedAt, payload,
+        ) { rowToStored(it) }.firstOrNull()?.toRecord()
 
     private fun renameForCopy(payload: String): String {
         if (payload.isBlank()) return payload
