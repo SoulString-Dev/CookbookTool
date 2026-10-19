@@ -14,8 +14,9 @@ import androidx.room.RoomDatabase
         RecipeCategoryCrossRef::class,
         RecipeImageEntity::class,
         MealLogEntity::class,
+        SyncStateEntity::class,
     ],
-    version = 1,
+    version = 2,
     exportSchema = true,
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -24,6 +25,7 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun categoryDao(): CategoryDao
     abstract fun mealLogDao(): MealLogDao
     abstract fun imageDao(): RecipeImageDao
+    abstract fun syncStateDao(): SyncStateDao
 
     companion object {
         const val NAME = "cookbook.db"
@@ -31,6 +33,7 @@ abstract class AppDatabase : RoomDatabase() {
         fun build(context: Context): AppDatabase = Room
             .databaseBuilder(context.applicationContext, AppDatabase::class.java, NAME)
             // Room 默认开启外键约束：删食谱会级联清掉它的原料/图片/做法/饮食记录
+            .addMigrations(MIGRATION_1_2)
             .build()
     }
 }

@@ -52,6 +52,13 @@ data class BackupRecipe(
     val ingredients: List<BackupIngredient> = emptyList(),
     val content: List<BackupContentBlock> = emptyList(),
     val images: List<BackupImage> = emptyList(),
+    /**
+     * 跨设备身份。**v2 才加**，所以旧备份里没有这个字段，默认空串——空的按新记录处理。
+     *
+     * 放在最后、给默认值，是为了不破坏「按位置传参」的调用点和旧文件的解析
+     * （[BackupCodec] 的解码器写的是 `ignoreUnknownKeys`，字段只增不减才是安全的）。
+     */
+    val uuid: String = "",
 )
 
 @Serializable
@@ -90,6 +97,8 @@ data class BackupCategory(
     val id: Long,
     val name: String,
     val sortOrder: Int = 0,
+    /** 跨设备身份，理由同 [BackupRecipe.uuid]。 */
+    val uuid: String = "",
 )
 
 @Serializable

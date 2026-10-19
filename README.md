@@ -51,17 +51,26 @@ adb install -r app/build/outputs/apk/debug/app-debug.apk         # 调试包，�
 
 ## 数据模型要点
 
-- `recipe` — 菜名、创建/更新时间（H1 菜名不存进正文，只在序列化时生成）
+- `recipe` — 菜名、创建/更新时间（H1 菜名不存进正文，只在序列化时生成），外加同步要用的
+  三件套：`uuid`（跨设备身份）、`deleted_at`（删除墓碑）、`dirty`/`server_rev`（待上传标记与
+  最后见到的服务端版本）
 - `content_block` — 做法/备注的行，`section`（DIRECTIONS/NOTE）+ `kind`（有序列表项/三级标题）+ `level`（缩进层级）
 - `ingredient` — 原料名 + 食材数（文本，允许"适量"）+ 量词（可为空串）
-- `category` / `recipe_category` — 分类是 tag，多对多
+- `category` / `recipe_category` — 分类是 tag，多对多；分类也带 `uuid`（两台设备各自建的「家常菜」
+  要认得出是同名但不同身份的两条）
 - `recipe_image` — 相对 `filesDir` 的路径 + 缩略图 + 顺序 + 是否列表封面
 - `meal_log` — `epoch_day` + 餐段（早/午/晚）+ 食谱；查"每道菜最后一次被吃"用于未来的加权随机
+- `sync_state` — 只有一行，记本机标识与"已经拉到哪个版本号"；**配对令牌不在这里**
+  （导入备份会 `clearAllTables()`，令牌放这儿会被一次「导出再导入」弄丢）
 
 餐段判定（`MealTime`）：02:00–10:29 早餐，10:30–15:29 午餐，其余晚餐；
 其中 00:00–01:59 算作**前一天**的晚餐。
 
-删除食谱会连带删掉它的原料、做法、图片和饮食记录（`ON DELETE CASCADE`，删除前会提示影响条数）。
+删除食谱是**软删**：行留着、打上 `deleted_at` 墓碑并标脏（"这道菜被删了"这件事要能同步给家人），
+原料与正文跟着墓碑一起留着，等墓碑到期清理时才由 `ON DELETE CASCADE` 带走。
+图片行与饮食记录是**本机数据**，删除时立刻清掉（删除前会提示影响条数）——
+而家人删掉这道菜时（同步推来的墓碑）只打墓碑，本机的饮食记录和图片不动：
+"我上周三吃过这道菜"是自己吃过的历史，不该因为别人删了菜谱就消失。
 
 搜索（`FuzzySearch`）全在内存里做，不走 SQL：菜名先比前缀、再比子串，然后是**逐字子序列**
 （输"番炒"能命中"番茄炒蛋"），最后是**拼音首字母子序列**（输"fqcd"也能命中）；
@@ -204,8 +213,9 @@ thumbs/ab12.jpg        缩略图
 
 - **真机验证过一轮**（Android 8.0+ 装得上、侧边栏能点、模糊搜索与 SAF 跳转正常）。
   这台开发机没有 `/dev/kvm`，起不了模拟器，所以剩下的触摸细节、系统相机、Photo Picker
-  还是只能装到手机上试。101 个 JVM 单测覆盖了领域逻辑、Room 读写、备份 zip 和主要界面
-  （Robolectric 里跑 Compose）。**侧边栏条目的点击在 Robolectric 里不正常**（触摸会被抽屉
+  还是只能装到手机上试。116 个 JVM 单测覆盖了领域逻辑、Room 读写、备份 zip 和主要界面
+  （Robolectric 里跑 Compose），其中 6 个是 v1→v2 的数据库迁移测试
+  （自己造一个 v1 库再让 Room 升上来，数据没丢、且迁移出的表结构 Room 认）。**侧边栏条目的点击在 Robolectric 里不正常**（触摸会被抽屉
   蒙版吃掉，怀疑是测试环境的问题），这个在真机上确认是好的。
 - **Robolectric 里不要测"弹窗里带输入框"的流程**：`AlertDialog` 里只要放 `OutlinedTextField`，
   Compose 就永远 idle 不下来（`AppNotIdleException`，有时直接 OOM）。带输入框的弹窗只能人工验。
@@ -223,6 +233,10 @@ thumbs/ab12.jpg        缩略图
 - [x] **M3** 图片：拍照/相册、排序、封面、黑底预览（最多六张）
 - [x] **M4** 饮食历史：记录流程、按天列表、编辑、整餐交换、批量删除
 - [x] **M5** 导出导入备份（SAF zip）、正式包签名、README 收尾
+- [x] **M6** 家庭共享的数据打底（Room v1→v2 迁移）：`recipe`/`category` 加 `uuid`，
+  食谱加 `deleted_at`/`dirty`/`server_rev`，新增 `sync_state` 游标表；界面删除改成**软删**，
+  远端墓碑走另一条路（`applyRemoteTombstone`：只打墓碑，不动本机饮食记录与图片）；
+  备份格式带上 `uuid`（老备份没有这个字段，按新记录处理）；迁移测试 + 同步地基单测共 15 个
 - [x] **真机反馈后的第一轮修改**：修掉"拍照/相册导入一律失败"（`decodeStream` 在
       `inJustDecodeBounds` 时返回 null，不能拿它的返回值判成败）；历史改餐可改到任意
       一天任意一餐（`moveSlotTo`）；弹窗里加日历选日期；返回键逐层退出模式；新建食谱

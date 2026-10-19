@@ -12,26 +12,33 @@ import org.miu.cookbook.domain.meal.MealSlot
 @Dao
 abstract class RecipeDao {
 
-    @Query("SELECT * FROM recipe ORDER BY created_at DESC, id DESC")
+    // 读的那一侧**每条查询都要自己带 `deleted_at = 0`**（soft delete 之后没有外键级联兜底了）：
+    // 漏掉一处的表现是「删掉的菜还在列表里」，而这种 bug 只有肉眼能发现。
+
+    @Query("SELECT * FROM recipe WHERE deleted_at = 0 ORDER BY created_at DESC, id DESC")
     abstract fun observeAll(): Flow<List<RecipeEntity>>
 
     /** 列表页要用的全部信息（菜名/分类/原料/封面）。 */
     @Transaction
-    @Query("SELECT * FROM recipe ORDER BY created_at DESC, id DESC")
+    @Query("SELECT * FROM recipe WHERE deleted_at = 0 ORDER BY created_at DESC, id DESC")
     abstract fun observeAllWithDetails(): Flow<List<RecipeListRow>>
 
-    @Query("SELECT * FROM recipe WHERE id = :id")
+    @Query("SELECT * FROM recipe WHERE id = :id AND deleted_at = 0")
     abstract fun observeById(id: Long): Flow<RecipeEntity?>
 
     /** 详情页要用的全部信息（多了正文）。 */
     @Transaction
-    @Query("SELECT * FROM recipe WHERE id = :id")
+    @Query("SELECT * FROM recipe WHERE id = :id AND deleted_at = 0")
     abstract fun observeDetail(id: Long): Flow<RecipeDetail?>
 
-    @Query("SELECT * FROM recipe WHERE id = :id")
+    @Query("SELECT * FROM recipe WHERE id = :id AND deleted_at = 0")
     abstract suspend fun findById(id: Long): RecipeEntity?
 
-    @Query("SELECT COUNT(*) FROM recipe")
+    /** 按跨设备身份找，**故意不过滤墓碑**：把远端的删除落到本地时，这正是要找到那一行。 */
+    @Query("SELECT * FROM recipe WHERE uuid = :uuid LIMIT 1")
+    abstract suspend fun findByUuid(uuid: String): RecipeEntity?
+
+    @Query("SELECT COUNT(*) FROM recipe WHERE deleted_at = 0")
     abstract fun observeCount(): Flow<Int>
 
     @Insert
@@ -40,15 +47,34 @@ abstract class RecipeDao {
     @Update
     abstract suspend fun update(recipe: RecipeEntity)
 
-    @Query("DELETE FROM recipe WHERE id = :id")
-    abstract suspend fun delete(id: Long)
+    /** 软删：打墓碑 + 标脏。行必须留着，「这行被删了」这件事才同步得出去。 */
+    @Query("UPDATE recipe SET deleted_at = :now, updated_at = :now, dirty = 1 WHERE id IN (:ids)")
+    abstract suspend fun softDeleteByIds(ids: List<Long>, now: Long)
 
-    /** 批量删除；饮食历史靠外键级联一起删掉。 */
-    @Query("DELETE FROM recipe WHERE id IN (:ids)")
-    abstract suspend fun deleteByIds(ids: List<Long>)
+    /**
+     * 清掉过期的墓碑。饮食记录会被外键级联带走——
+     * 这是已知取舍：meal_log 靠 `recipe_id` 挂在 recipe 上，要彻底留住本机历史，
+     * 得把 meal_log 改成按 uuid 弱引用，那是另一件事（见 README 的已知边界）。
+     */
+    @Query("DELETE FROM recipe WHERE deleted_at != 0 AND deleted_at < :before")
+    abstract suspend fun purgeTombstones(before: Long): Int
 
-    @Query("UPDATE recipe SET title = :title, updated_at = :updatedAt WHERE id = :id")
+    @Query("UPDATE recipe SET title = :title, updated_at = :updatedAt, dirty = 1 WHERE id = :id")
     abstract suspend fun updateTitle(id: Long, title: String, updatedAt: Long)
+
+    /** 标脏（同步引擎重试、以及分类变更这种「内容没改但关联改了」的场合要用）。 */
+    @Query("UPDATE recipe SET dirty = 1 WHERE id IN (:ids)")
+    abstract suspend fun markDirty(ids: List<Long>)
+
+    /**
+     * 把**远端**的墓碑落到本机：只打墓碑、不顺带改别的。
+     *
+     * 特意和 [softDeleteByIds] 分开：[softDeleteByIds] 是「我这台机器上删掉这道菜」，
+     * 本机的饮食记录跟着走；这里是「家人删掉了这道菜」，本机的饮食记录、图片文件都不动——
+     * 记录是自己吃过的历史，不该因为别人删了菜谱就消失。
+     */
+    @Query("UPDATE recipe SET deleted_at = :deletedAt, updated_at = :deletedAt, dirty = 0 WHERE id = :id")
+    abstract suspend fun applyRemoteTombstone(id: Long, deletedAt: Long)
 
     // ---------- 原料 / 做法备注：整体替换 ----------
     //
@@ -85,7 +111,7 @@ abstract class RecipeDao {
         touch(recipeId, System.currentTimeMillis())
     }
 
-    @Query("UPDATE recipe SET updated_at = :updatedAt WHERE id = :id")
+    @Query("UPDATE recipe SET updated_at = :updatedAt, dirty = 1 WHERE id = :id")
     abstract suspend fun touch(id: Long, updatedAt: Long)
 
     // ---------- 备份：整份读出 / 整份写回 ----------
@@ -93,7 +119,8 @@ abstract class RecipeDao {
     // 导入是「清空 + 按原 id 写回」，所以这些插入都用 REPLACE：
     // id 保持原样，食谱-分类-图片-饮食记录之间的引用才不会错位。
 
-    @Query("SELECT * FROM recipe ORDER BY id")
+    /** 导出只带活着的：墓碑是同步用的中间状态，不该出现在给用户看的备份文件里。 */
+    @Query("SELECT * FROM recipe WHERE deleted_at = 0 ORDER BY id")
     abstract suspend fun allRecipes(): List<RecipeEntity>
 
     @Query("SELECT * FROM ingredient ORDER BY recipe_id, sort_order, id")
@@ -129,6 +156,10 @@ interface CategoryDao {
 
     @Query("SELECT * FROM category WHERE name = :name LIMIT 1")
     suspend fun findByName(name: String): CategoryEntity?
+
+    /** 按跨设备身份认分类。名字是给人改的，uuid 才是身份。 */
+    @Query("SELECT * FROM category WHERE uuid = :uuid LIMIT 1")
+    suspend fun findByUuid(uuid: String): CategoryEntity?
 
     @Query("SELECT COALESCE(MAX(sort_order), 0) FROM category")
     suspend fun maxSortOrder(): Int
@@ -207,6 +238,10 @@ abstract class MealLogDao {
 
     @Query("DELETE FROM meal_log WHERE id IN (:ids)")
     abstract suspend fun deleteByIds(ids: List<Long>)
+
+    /** 删食谱时一起清掉它的饮食记录（本机删除的语义，和 v1 的级联效果一致）。 */
+    @Query("DELETE FROM meal_log WHERE recipe_id IN (:recipeIds)")
+    abstract suspend fun deleteForRecipes(recipeIds: List<Long>)
 
     @Query("DELETE FROM meal_log WHERE epoch_day = :day")
     abstract suspend fun deleteForDay(day: Long)
@@ -292,6 +327,10 @@ interface RecipeImageDao {
     @Query("DELETE FROM recipe_image WHERE id = :imageId")
     suspend fun deleteById(imageId: Long)
 
+    /** 删食谱时一起清掉图片行（磁盘文件由仓库层负责删）。 */
+    @Query("DELETE FROM recipe_image WHERE recipe_id IN (:recipeIds)")
+    suspend fun deleteForRecipes(recipeIds: List<Long>)
+
     @Query("UPDATE recipe_image SET sort_order = :sortOrder WHERE id = :imageId")
     suspend fun updateSortOrder(imageId: Long, sortOrder: Int)
 
@@ -303,6 +342,24 @@ interface RecipeImageDao {
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertAll(items: List<RecipeImageEntity>)
+}
+
+@Dao
+interface SyncStateDao {
+
+    /** 只有一行（id = [SyncStateEntity.SINGLETON_ID]），所以用 `WHERE id = 1` 而不是 LIMIT 1。 */
+    @Query("SELECT * FROM sync_state WHERE id = 1")
+    fun observe(): Flow<SyncStateEntity?>
+
+    @Query("SELECT * FROM sync_state WHERE id = 1")
+    suspend fun get(): SyncStateEntity?
+
+    /**
+     * 整行写入。故意不做「只 UPDATE 不 INSERT」的窄接口：
+     * 那种接口在行还不存在时是静默地什么都没改，游标丢了要过很久才被发现。
+     */
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun put(state: SyncStateEntity)
 }
 
 /** 交换两餐时的中转日子：真实日期是 1970 起的天数，永远不可能是 Long.MIN_VALUE。 */

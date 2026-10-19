@@ -26,6 +26,8 @@ import org.miu.cookbook.data.db.RecipeImageEntity
 import org.miu.cookbook.data.db.RecipeDetail
 import org.miu.cookbook.data.db.RecipeEntity
 import org.miu.cookbook.data.db.RecipeListRow
+import org.miu.cookbook.data.db.SyncStateDao
+import org.miu.cookbook.data.db.SyncStateEntity
 import org.miu.cookbook.data.image.ImageStore
 import org.miu.cookbook.data.image.ImportedImage
 import org.miu.cookbook.domain.backup.BackupCategory
@@ -58,6 +60,7 @@ class CookbookRepository(
     private val categoryDao: CategoryDao = database.categoryDao()
     private val mealLogDao: MealLogDao = database.mealLogDao()
     private val imageDao: RecipeImageDao = database.imageDao()
+    private val syncStateDao: SyncStateDao = database.syncStateDao()
 
     // ---------- 读 ----------
 
@@ -80,7 +83,16 @@ class CookbookRepository(
     /** 新建食谱，返回新食谱 id。 */
     suspend fun createRecipe(title: String): Long = io {
         val now = System.currentTimeMillis()
-        recipeDao.insert(RecipeEntity(title = title.trim(), createdAt = now, updatedAt = now))
+        recipeDao.insert(
+            RecipeEntity(
+                uuid = newUuid(),
+                title = title.trim(),
+                createdAt = now,
+                updatedAt = now,
+                // dirty 的默认值就是 true，这里显式写出来是为了让「新建 = 要上传」一眼可见
+                dirty = true,
+            ),
+        )
     }
 
     /** 改名。空名字直接忽略——界面上保存按钮会拦住，这里再兜一层。 */
@@ -91,13 +103,23 @@ class CookbookRepository(
     }
 
     /**
-     * 批量删除食谱。饮食历史由外键 CASCADE 一并删除，
-     * 但磁盘上的图片文件不在数据库里，得自己收——只删行的话图会永久堆在私有目录里。
+     * 批量删除食谱。
+     *
+     * 这里删的是**本机**的这份数据，所以语义和 v1 一样：记录、图片都跟着走。
+     * 数据库里留的是墓碑（`deleted_at` 非 0），不是物理删——「删掉」这件事要能同步给家人。
+     * 远端推来的墓碑走的是另一条路，那条路不动本机饮食记录。
      */
     suspend fun deleteRecipes(ids: List<Long>) = io {
         if (ids.isEmpty()) return@io
-        val images = ids.flatMap { imageDao.listFor(it) }
-        recipeDao.deleteByIds(ids)
+        val now = System.currentTimeMillis()
+        val images = database.withTransaction {
+            val found = ids.flatMap { imageDao.listFor(it) }
+            imageDao.deleteForRecipes(ids)
+            mealLogDao.deleteForRecipes(ids)
+            recipeDao.softDeleteByIds(ids, now)
+            found
+        }
+        // 文件删除放在事务外：删磁盘不该占着数据库事务（图片行已经在事务里没了）
         images.forEach { ImageStore.deleteFiles(baseDir, it.path, it.thumbPath) }
     }
 
@@ -196,6 +218,8 @@ class CookbookRepository(
             val existing = categoryDao.linkedCategoryIds(recipeId).toSet()
             (existing - categoryIds).forEach { categoryDao.unlink(recipeId, it) }
             (categoryIds - existing).forEach { categoryDao.link(RecipeCategoryCrossRef(recipeId, it)) }
+            // 改了分类也是改了这道菜：不标脏的话，家人那边永远看不到分类变化
+            if (existing != categoryIds) recipeDao.touch(recipeId, System.currentTimeMillis())
         }
     }
 
@@ -205,9 +229,13 @@ class CookbookRepository(
      */
     suspend fun addCategories(recipeIds: List<Long>, categoryIds: Set<Long>) = io {
         database.withTransaction {
+            val now = System.currentTimeMillis()
             recipeIds.forEach { recipeId ->
                 val existing = categoryDao.linkedCategoryIds(recipeId).toSet()
-                (categoryIds - existing).forEach { categoryDao.link(RecipeCategoryCrossRef(recipeId, it)) }
+                val added = categoryIds - existing
+                if (added.isEmpty()) return@forEach
+                added.forEach { categoryDao.link(RecipeCategoryCrossRef(recipeId, it)) }
+                recipeDao.touch(recipeId, now)
             }
         }
     }
@@ -221,7 +249,11 @@ class CookbookRepository(
         require(trimmed.isNotEmpty()) { "分类名不能为空" }
         categoryDao.findByName(trimmed)?.let { return@io it.id }
         val inserted = categoryDao.insert(
-            CategoryEntity(name = trimmed, sortOrder = categoryDao.maxSortOrder() + 1),
+            CategoryEntity(
+                uuid = newUuid(),
+                name = trimmed,
+                sortOrder = categoryDao.maxSortOrder() + 1,
+            ),
         )
         if (inserted > 0) inserted else requireNotNull(categoryDao.findByName(trimmed)).id
     }
@@ -300,6 +332,46 @@ class CookbookRepository(
     }
 
 
+    // ---------- 同步 ----------
+    //
+    // 这一版只有「游标读物」：拉取/推送/冲突那套在同步引擎里（下一步）。
+    // 放在仓库里是因为界面只认仓库这一个入口，设置页要显示上次同步时间。
+
+    /** 同步游标（库里只有一行）。 */
+    val syncState: Flow<SyncStateEntity?> = syncStateDao.observe()
+
+    suspend fun currentSyncState(): SyncStateEntity? = io { syncStateDao.get() }
+
+    suspend fun saveSyncState(state: SyncStateEntity) = io { syncStateDao.put(state) }
+
+    /**
+     * 本机标识。服务端用它记录「这条改动是谁写的」，第一次要用的时候才生成。
+     *
+     * 注意 `put` 是整行替换，所以这里是「读出来改一个字段再写回」，
+     * 不会把 lastRev 顺手清零。
+     */
+    suspend fun deviceId(): String = io {
+        val current = syncStateDao.get()
+        current?.deviceId?.takeIf { it.isNotBlank() }?.let { return@io it }
+        val generated = newUuid()
+        syncStateDao.put((current ?: SyncStateEntity()).copy(deviceId = generated))
+        generated
+    }
+
+    /**
+     * 把远端推来的墓碑落到本机（家人删掉了这道菜）。找到并打上墓碑返回 true，本机没有这条返回 false。
+     *
+     * 和 [deleteRecipes] 的差别是**故意的**：这条路不动本机饮食记录，也不删图片文件。
+     * 谁删的谁清理磁盘；而「我上周三吃过这道菜」是本机自己的历史，
+     * 不该因为家人删了菜谱就跟着消失。
+     */
+    suspend fun applyRemoteTombstone(uuid: String, deletedAt: Long): Boolean = io {
+        if (deletedAt <= 0) return@io false
+        val row = recipeDao.findByUuid(uuid) ?: return@io false
+        recipeDao.applyRemoteTombstone(row.id, deletedAt)
+        true
+    }
+
     // ---------- 备份 ----------
 
     /** 现有多少道菜、多少条饮食记录（导入前提示要覆盖掉什么）。 */
@@ -349,7 +421,7 @@ class CookbookRepository(
         return BackupFile.create(
             exportedAt = System.currentTimeMillis(),
             categories = categoryDao.allCategories().map {
-                BackupCategory(id = it.id, name = it.name, sortOrder = it.sortOrder)
+                BackupCategory(id = it.id, name = it.name, sortOrder = it.sortOrder, uuid = it.uuid)
             },
             recipes = recipeDao.allRecipes().map { recipe ->
                 BackupRecipe(
@@ -357,6 +429,7 @@ class CookbookRepository(
                     title = recipe.title,
                     createdAt = recipe.createdAt,
                     updatedAt = recipe.updatedAt,
+                    uuid = recipe.uuid,
                     categories = links[recipe.id].orEmpty().map { it.categoryId },
                     ingredients = ingredients[recipe.id].orEmpty().map {
                         BackupIngredient(it.name, it.amount, it.unit, it.sortOrder)
@@ -396,16 +469,38 @@ class CookbookRepository(
     /**
      * 按原 id 写回。被引用的东西缺了就丢掉那条引用，而不是让整个导入失败：
      * 备份文件可能是手改过的，或者图片文件在传输中丢了。
+     *
+     * 身份（uuid）优先用备份里的：从 v1 老备份、或者手写的备份进来时没有 uuid，
+     * 那就现生成一个。写回的行一律**标脏**——不管这份备份是哪来的，
+     * 服务端上有没有这些行本机并不知道，标脏让它下次同步去认领（服务端按 uuid 去重，多传无害）。
      */
     private suspend fun restore(backup: BackupFile, tmp: File) {
         val recipeIds = backup.recipes.map { it.id }.toSet()
         val categoryIds = backup.categories.map { it.id }.toSet()
 
         categoryDao.insertAll(
-            backup.categories.map { CategoryEntity(it.id, it.name, it.sortOrder) },
+            backup.categories.map {
+                CategoryEntity(
+                    id = it.id,
+                    uuid = it.uuid.ifBlank { newUuid() },
+                    name = it.name,
+                    sortOrder = it.sortOrder,
+                )
+            },
         )
         recipeDao.insertRecipes(
-            backup.recipes.map { RecipeEntity(it.id, it.title, it.createdAt, it.updatedAt) },
+            backup.recipes.map {
+                RecipeEntity(
+                    id = it.id,
+                    uuid = it.uuid.ifBlank { newUuid() },
+                    title = it.title,
+                    createdAt = it.createdAt,
+                    updatedAt = it.updatedAt,
+                    deletedAt = 0,
+                    dirty = true,
+                    serverRev = 0,
+                )
+            },
         )
         recipeDao.insertAllLinks(
             backup.recipes.flatMap { recipe ->
