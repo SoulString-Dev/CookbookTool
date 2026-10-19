@@ -18,7 +18,12 @@ services:
       # 数据库、图片、配对码都在这里；备份就是拷这个目录（见 deploy/README.md「备份」）
       - ./data:/data
     environment:
-      # 固定配对码：填 6 位数字最省事；注掉就用一次性的（写在 /data/pair-code.txt）
+      # 这行是镜像自带的默认值，写出来只是为了让 environment 是个「非空映射」——
+      # 下面若全是注释，docker compose 会报 services.cookbook-sync.environment must be a mapping。
+      COOKBOOK_DATA: "/data"
+
+      # 需要哪条就把哪条前面的 # 去掉：
+      # 固定配对码：填 6 位数字最省事；不填就用一次性的（写在 /data/pair-code.txt）
       # COOKBOOK_PAIR_CODE: "246810"
       # 前面挂了反向代理时：填反代的来源地址，服务端才会采信 X-Forwarded-For
       # COOKBOOK_TRUSTED_PROXIES: "127.0.0.1,::1,172.16.0.0/12"
