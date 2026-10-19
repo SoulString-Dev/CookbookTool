@@ -1,6 +1,8 @@
 package org.miu.cookbook.data.sync
 
+import android.os.NetworkOnMainThreadException
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.delay
@@ -10,6 +12,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withContext
 import org.miu.cookbook.data.CookbookRepository
 import org.miu.cookbook.data.db.AppDatabase
 import org.miu.cookbook.data.db.SyncStateEntity
@@ -32,6 +35,14 @@ data class SyncReport(
     val conflicts: Int,
     val lastRev: Long,
 )
+
+/**
+ * 带人话的失败：[message] 就是 [SyncEngine] 里 describe() 翻译过的那句，界面直接显示即可。
+ *
+ * 为什么不用原始异常：像 `NetworkOnMainThreadException` 这种 message 是 null，
+ * 界面只能退化成「未知原因」，等于没说。
+ */
+class SyncFailure(message: String, cause: Throwable? = null) : Exception(message, cause)
 
 /** 同步进度，给设置页显示。（真正的「上次同步时间」在库里，进程重启也还在。） */
 sealed interface SyncStatus {
@@ -87,7 +98,7 @@ class SyncEngine(
         localUrl: String,
         code: String,
         deviceName: String,
-    ): Result<Unit> = runCatching {
+    ): Result<Unit> = withContext(Dispatchers.IO) { runCatching {
         credentials.primaryUrl = primaryUrl.trim().trimEnd('/')
         credentials.localUrl = localUrl.trim().trimEnd('/')
 
@@ -128,7 +139,7 @@ class SyncEngine(
             ),
         )
         _status.value = SyncStatus.Idle
-    }.onFailure { _status.value = SyncStatus.Failed(describe(it)) }
+    }.onFailure { _status.value = SyncStatus.Failed(describe(it)) }.humanFailure() }
 
     /** 断开设备：清掉令牌与地址。本地数据和脏标记都留着（以后再配一个服务端还能整体推上去）。 */
     suspend fun disconnect() = mutex.withLock {
@@ -145,6 +156,17 @@ class SyncEngine(
      * 失败不抛给界面，包在 [Result] 里：调用方要的是一句能显示的话，不是一个崩溃。
      */
     suspend fun syncNow(): Result<SyncReport> = mutex.withLock {
+        withContext(Dispatchers.IO) { syncUnlocked() }
+    }
+
+    /**
+     * [syncNow] 的本体。
+     *
+     * 单独抽出来是因为**网络调用必须离开界面线程**：`HttpURLConnection` 是阻塞的，在 Android 的
+     * 主线程上一发请求就会抛 `NetworkOnMainThreadException`——它的 message 是 null，
+     * 界面只能显示「未知原因」，排查起来毫无线索（1.1.0 的配对失败就是这么来的）。
+     */
+    private suspend fun syncUnlocked(): Result<SyncReport> {
         val state = repository.currentSyncState()
         if (!credentials.paired || state == null) {
             return Result.failure(IllegalStateException("还没配对"))
@@ -170,7 +192,7 @@ class SyncEngine(
                 lastError = error
             }
         }
-        fail(lastError ?: IOException("连不上服务端"), tried = candidates.size)
+        return fail(lastError ?: IOException("连不上服务端"), tried = candidates.size)
     }
 
     /**
@@ -203,8 +225,12 @@ class SyncEngine(
         runCatching {
             repository.currentSyncState()?.let { repository.saveSyncState(it.copy(lastError = message)) }
         }
-        return Result.failure(error)
+        return Result.failure(SyncFailure(message, error))
     }
+
+    /** 把失败换成「带人话 message」的异常，界面就不必再自己猜原因。 */
+    private fun <T> Result<T>.humanFailure(): Result<T> =
+        exceptionOrNull()?.let { Result.failure(SyncFailure(describe(it), it)) } ?: this
 
     /** 前面几个候选地址用短超时探路，最后一个（通常是公网）才舍得等。 */
     private fun timeoutFor(index: Int, lastIndex: Int): Int =
@@ -365,6 +391,7 @@ class SyncEngine(
         is UnknownHostException -> "找不到服务端地址，检查一下填的地址"
         is ConnectException -> "连不上服务端：确认地址、端口，以及服务端有没有在跑"
         is SocketTimeoutException -> "服务端没响应（超时）"
+        is NetworkOnMainThreadException -> "App 在界面线程上发了网络请求（这是程序的 bug，不是你的配置问题）"
         is IOException -> "连不上服务端：确认地址、端口，以及服务端有没有在跑"
         else -> error.message ?: error.javaClass.simpleName
     }

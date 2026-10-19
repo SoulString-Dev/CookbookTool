@@ -3,8 +3,12 @@ package org.miu.cookbook.data.sync
 import android.content.Context
 import androidx.room.Room
 import androidx.test.core.app.ApplicationProvider
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.asCoroutineDispatcher
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
@@ -22,6 +26,7 @@ import org.junit.runner.RunWith
 import org.miu.cookbook.data.CookbookRepository
 import org.miu.cookbook.data.db.AppDatabase
 import org.miu.cookbook.data.db.ContentSection
+import org.miu.cookbook.data.db.SyncStateEntity
 import org.miu.cookbook.data.image.ImageStore
 import org.miu.cookbook.data.image.ImportedImage
 import org.miu.cookbook.domain.meal.MealSlot
@@ -33,6 +38,8 @@ import org.miu.cookbook.sync.server.SyncServer
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
 import java.io.File
+import java.net.ServerSocket
+import java.util.concurrent.Executors
 
 /**
  * 同步引擎的端到端测试：**进程内起一个真的服务端**（随机端口、真 SQLite、真 HTTP），
@@ -308,6 +315,52 @@ class SyncEngineTest {
     private suspend fun Device.pairAndSync(serverUrl: String): SyncReport {
         if (!credentials.paired) engine.pair(serverUrl, "", PAIR_CODE, tag).getOrThrow()
         return engine.syncNow().getOrThrow()
+    }
+
+
+    @Test
+    fun `同步不会占住调用方的线程`() = runBlocking {
+        // 界面是在主线程上点「配对」「立即同步」的。网络调用要是不切线程，
+        // Android 会直接抛 NetworkOnMainThreadException，而它的 message 是 null——
+        // 界面上只会显示「未知原因」（1.1.0 的配对失败就是这么来的）。
+        val device = newDevice("slow")
+
+        // 一个只会「接住连接、拖着不答」的地址：让这一轮同步在 600ms 内一直飞着
+        val socket = ServerSocket(0)
+        val slowBase = "http://127.0.0.1:${socket.localPort}"
+        val acceptor = Thread {
+            runCatching {
+                socket.accept().use { client ->
+                    client.getInputStream().read(ByteArray(4096))
+                    Thread.sleep(600)
+                }
+            }
+        }.apply { isDaemon = true; start() }
+
+        val caller = Executors.newSingleThreadExecutor().asCoroutineDispatcher()
+        try {
+            device.credentials.token = "token-from-server"
+            device.credentials.primaryUrl = slowBase
+            device.repo.saveSyncState(SyncStateEntity(serverUrl = slowBase, deviceId = "dev"))
+
+            val job = launch(caller) { device.engine.syncNow() }
+
+            // 同一个（单线程）调度器上再塞一件事：它要能在同步还没结束时跑起来
+            val bystander = CompletableDeferred<Boolean>()
+            val second = launch(caller) {
+                delay(100)
+                bystander.complete(true)
+            }
+            val ranWhileBusy = withTimeoutOrNull(1_500) { bystander.await() } == true
+            assertTrue("同步把调用方线程占住了：网络调用必须切到 IO 线程", ranWhileBusy && job.isActive)
+
+            job.join()
+            second.join()
+        } finally {
+            caller.close()
+            runCatching { socket.close() }
+            acceptor.interrupt()
+        }
     }
 
     private class Device(

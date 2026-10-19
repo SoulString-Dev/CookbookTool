@@ -323,10 +323,10 @@ docker compose exec cookbook-sync \
 
 - **真机验证过一轮**（Android 8.0+ 装得上、侧边栏能点、模糊搜索与 SAF 跳转正常）。
   这台开发机没有 `/dev/kvm`，起不了模拟器，所以剩下的触摸细节、系统相机、Photo Picker
-  还是只能装到手机上试。129 个 JVM 单测覆盖了领域逻辑、Room 读写、备份 zip、同步引擎和主要界面
+  还是只能装到手机上试。130 个 JVM 单测覆盖了领域逻辑、Room 读写、备份 zip、同步引擎和主要界面
   （Robolectric 里跑 Compose），其中 8 个是数据库迁移测试（v1→v2→v3：自己造一个老版本的库
-  再让 Room 升上来，数据没丢、且迁移出的表结构 Room 认），7 个是同步引擎的端到端测试
-  （**进程内起一个真服务端**，用两套独立的库假装两台手机）；另有 16 个服务端测试
+  再让 Room 升上来，数据没丢、且迁移出的表结构 Room 认），8 个是同步引擎的端到端测试
+  （**进程内起一个真服务端**，用两套独立的库假装两台手机）；另有 23 个服务端测试
   （`bash scripts/build.sh :sync-server:test`，真起进程内 HTTP 服务）。**侧边栏条目的点击在 Robolectric 里不正常**（触摸会被抽屉
   蒙版吃掉，怀疑是测试环境的问题），这个在真机上确认是好的。
 - **Robolectric 里不要测"弹窗里带输入框"的流程**：`AlertDialog` 里只要放 `OutlinedTextField`，
@@ -362,6 +362,12 @@ docker compose exec cookbook-sync \
   HTTP 用 JDK 自带的 `com.sun.net.httpserver`、库用 sqlite-jdbc（这台开发机拉不到 Ktor，
   家用 NAS 上也不需要）。15 个服务端测试（真起进程内 HTTP 服务、真发请求）+
   `scripts/sync-server-check.sh`（curl 全流程自检）+ `deploy/` 的 Dockerfile 与 compose
+- [x] **1.1.1** 修一个只有真机才会犯的错：配对的网络调用跑在界面线程上。`HttpURLConnection`
+  是阻塞的，Android 主线程一发请求就抛 `NetworkOnMainThreadException`，而它的 `message`
+  是 null——界面上只能显示「配对没成功：未知原因」。现在配对与手动同步都切到 `Dispatchers.IO`，
+  失败信息也统一用 `describe()` 翻成人话（`SyncFailure`），并加了一条**只在「调用方线程被占住」
+  时才失败**的测试：拿一个只会接住连接、拖着 600ms 不答的地址，断言同一线程上排队的另一件事
+  能在同步结束前跑起来
 - [x] **M10**（1.1.0）公网与局域网兼顾 + 改完就同步：两个地址都存在本地（局域网 / 公网，
   不需要数据库迁移），每轮按「局域网 → 上次连上的 → 公网」顺序试，前面几个用 3 秒短超时探路、
   最后一个才等 10 秒；`requestSync()` 用 conflated Channel 把 1.5 秒内的多次触发合并成一轮，
