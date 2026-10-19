@@ -1,0 +1,25 @@
+# 不用 Docker 的路线：把 fat jar 放到 NAS 上，用 systemd 看着它。
+# 需要 NAS 上有 Java 17 或更高（`java -version` 查一下；很多 NAS 自带的是 8 或 11，不够）。
+#
+# 安装：
+#   sudo cp deploy/cookbook-sync.service /etc/systemd/system/
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now cookbook-sync
+#   journalctl -u cookbook-sync -f
+#
+# 按自己的用户名和路径改下面两行（User / ExecStart）。
+[Unit]
+Description=食谱本同步服务端
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=yourname
+WorkingDirectory=/volume1/cookbook-sync
+ExecStart=/usr/bin/java -XX:MaxRAMPercentage=75 -jar /volume1/cookbook-sync/cookbook-sync.jar --port 8080 --data /volume1/cookbook-sync/data
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

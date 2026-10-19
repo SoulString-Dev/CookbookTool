@@ -1,0 +1,28 @@
+# 食谱本同步服务端：NAS 上「只跑镜像」的 compose。
+#
+# 和同目录的 docker-compose.yml 的区别：这个**不构建**，直接用已经 load 进来的镜像。
+# 适合「在开发机上打镜像、拷到 NAS」那条路（见 deploy/README.md 的路线 A）。
+#
+#   docker load -i cookbook-sync-image.tar
+#   docker compose -f docker-compose.nas.yml up -d
+#   cat data/pair-code.txt          # 配对码
+services:
+  cookbook-sync:
+    image: cookbook-sync:1
+    container_name: cookbook-sync
+    restart: unless-stopped
+    ports:
+      # 只映射到局域网。要出公网必须前面挂反向代理做 HTTPS，见 deploy/Caddyfile.example
+      - "8080:8080"
+    volumes:
+      # 数据库、图片、配对码都在这里；备份就是拷这个目录（见 deploy/README.md「备份」）
+      - ./data:/data
+    environment:
+      # 固定配对码：填 6 位数字最省事；注掉就用一次性的（写在 /data/pair-code.txt）
+      # COOKBOOK_PAIR_CODE: "246810"
+      # 前面挂了反向代理时：填反代的来源地址，服务端才会采信 X-Forwarded-For
+      # COOKBOOK_TRUSTED_PROXIES: "127.0.0.1,::1,172.16.0.0/12"
+      # 只在走了 HTTPS 反代时打开：裸 HTTP 一律拒绝（/health 除外）
+      # COOKBOOK_REQUIRE_HTTPS: "1"
+      # 内存小的 NAS 上给 JVM 定个上限（不填则按容器内存的 75% 走）
+      # JAVA_TOOL_OPTIONS: "-Xmx256m"

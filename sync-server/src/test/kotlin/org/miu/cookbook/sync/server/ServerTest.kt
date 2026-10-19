@@ -29,6 +29,7 @@ import org.miu.cookbook.sync.model.SyncProtocol
 import org.miu.cookbook.sync.model.SyncRecipePayload
 import java.net.URI
 import java.net.http.HttpClient
+import java.sql.DriverManager
 import java.net.http.HttpRequest
 import java.net.http.HttpResponse
 
@@ -62,7 +63,7 @@ class ServerTest {
         server.close()
     }
 
-    private fun newServer(apiPerMinute: Int = 0): SyncServer = SyncServer(
+    private fun newServer(apiPerMinute: Int = 0, requireHttps: Boolean = false): SyncServer = SyncServer(
         ServerConfig(
             port = 0,
             dataDir = tmp.newFolder(),
@@ -71,6 +72,7 @@ class ServerTest {
             apiPerMinute = apiPerMinute,
             blobPerMinute = 0,
             pairPerMinute = 0,
+            requireHttps = requireHttps,
         ),
     )
 
@@ -364,6 +366,7 @@ class ServerTest {
         token: String? = null,
         json: String? = null,
         bytes: ByteArray? = null,
+        headers: Map<String, String> = emptyMap(),
         at: String = base,
     ): Res {
         val builder = HttpRequest.newBuilder(URI.create(at + path))
@@ -375,8 +378,55 @@ class ServerTest {
         builder.method(method, publisher)
         if (json != null || bytes != null) builder.header("Content-Type", "application/json")
         if (token != null) builder.header("Authorization", "Bearer $token")
+        headers.forEach { (name, value) -> builder.header(name, value) }
         val response = http.send(builder.build(), HttpResponse.BodyHandlers.ofByteArray())
         return Res(response.statusCode(), response.body())
+    }
+
+    @Test
+    fun `备份出来的是一份能用的库，备份完服务照常跑`() {
+        val a = pair("甲")
+        push(a.token, PushRequest(a.deviceId, 0, listOf(PushUpsert("r-1", 1000, recipe("备份前的", 1000)))))
+
+        val target = tmp.newFile("backup.db")
+        server.store().backupTo(target)
+
+        assertTrue("备份文件不该是空的", target.length() > 0)
+        DriverManager.getConnection("jdbc:sqlite:${target.path}").use { conn ->
+            conn.createStatement().use { st ->
+                st.executeQuery("SELECT COUNT(*) FROM recipe WHERE deleted = 0").use { rs ->
+                    rs.next()
+                    assertEquals("备份里应该有那条记录", 1, rs.getInt(1))
+                }
+            }
+        }
+
+        // 备份完服务不用重启，接着推拉
+        push(a.token, PushRequest(a.deviceId, 1, listOf(PushUpsert("r-2", 2000, recipe("备份后的", 2000)))))
+        assertEquals(2, server.store().recipeCount())
+    }
+
+    @Test
+    fun `开了 require-https 之后裸 HTTP 会被挡住，可信反代声明 https 才放行`() {
+        server.close()
+        server = newServer(requireHttps = true)
+        base = "http://127.0.0.1:${server.start()}"
+
+        // 直连（没有 X-Forwarded-Proto）：连令牌都不看，先挡住
+        val plain = call("GET", "${SyncProtocol.PATH_SYNC}?since=0")
+        assertEquals(400, plain.status)
+        assertTrue(plain.text.contains("https_required"))
+
+        // 健康检查不拦：监控和自检脚本要靠它
+        assertEquals(200, call("GET", SyncProtocol.PATH_HEALTH).status)
+
+        // 可信来源（127.0.0.1 在默认名单里）声明自己走的是 https → 放行到鉴权那一步
+        val proxied = call(
+            "GET",
+            "${SyncProtocol.PATH_SYNC}?since=0",
+            headers = mapOf("X-Forwarded-Proto" to "https"),
+        )
+        assertEquals(401, proxied.status)
     }
 
     private fun pair(name: String, at: String = base): PairResponse {

@@ -85,6 +85,9 @@ class SyncServer(private val config: ServerConfig) : AutoCloseable {
     private fun route(exchange: HttpExchange) {
         val path = exchange.requestURI.path.let { if (it.length > 1) it.trimEnd('/') else it }
         val method = exchange.requestMethod.uppercase()
+        if (config.requireHttps && path != SyncProtocol.PATH_HEALTH && !isHttps(exchange)) {
+            throw HttpError(400, "https_required", "这个服务端只接受 HTTPS，请从域名访问")
+        }
         when {
             path == SyncProtocol.PATH_HEALTH && method == "GET" -> health(exchange)
             path == SyncProtocol.PATH_PAIR && method == "POST" -> pair(exchange)
@@ -95,6 +98,16 @@ class SyncServer(private val config: ServerConfig) : AutoCloseable {
             path.startsWith(SyncProtocol.PATH_BLOB_PREFIX) && method == "GET" -> blobGet(exchange, path)
             else -> throw HttpError(404, "not_found", "没有这个接口：$method $path")
         }
+    }
+
+    /**
+     * 这次请求算不算 HTTPS。服务端自己只说明文，所以只能看可信反代给的 `X-Forwarded-Proto`；
+     * 来源不可信时直接当明文——伪造这个头的请求本来就会被拒。
+     */
+    private fun isHttps(exchange: HttpExchange): Boolean {
+        val peer = exchange.remoteAddress.address?.hostAddress.orEmpty()
+        if (!trustedProxies.contains(peer)) return false
+        return exchange.requestHeaders.getFirst("X-Forwarded-Proto")?.equals("https", ignoreCase = true) == true
     }
 
     // ------------------------------------------------------------ 各接口

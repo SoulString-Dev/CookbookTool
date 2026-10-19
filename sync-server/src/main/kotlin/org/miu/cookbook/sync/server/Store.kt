@@ -32,7 +32,7 @@ class Store(dataDir: File) : AutoCloseable {
     init {
         dataDir.mkdirs()
         blobs = BlobStore(File(dataDir, "blobs"))
-        conn = DriverManager.getConnection("jdbc:sqlite:${File(dataDir, "cookbook-sync.db").path}")
+        conn = DriverManager.getConnection("jdbc:sqlite:${File(dataDir, DB_NAME).path}")
         conn.createStatement().use { st ->
             // WAL 让「读」不被「写」挡住；busy_timeout 给磁盘卡顿时一点余地
             st.execute("PRAGMA journal_mode=WAL")
@@ -120,6 +120,22 @@ class Store(dataDir: File) : AutoCloseable {
     fun recipeCount(): Long = read { query("SELECT COUNT(*) FROM recipe WHERE deleted = 0") { it.getLong(1) }.first() }
 
     override fun close() = conn.close()
+
+    /**
+     * 导出一致性快照。用 SQLite 自己的 `VACUUM INTO`：它把 WAL 里还没合并的页也一起算上，
+     * 所以**对着正在跑的实例执行也是安全的**（读快照不会被写挡住）。
+     *
+     * 图片不在库里（见 [BlobStore]），备份要连 `blobs/` 目录一起拷——那里面按内容寻址、
+     * 落盘是「临时文件 + 改名」，运行中直接拷也是安全的。
+     */
+    fun backupTo(target: File) {
+        target.parentFile?.mkdirs()
+        if (target.exists() && !target.delete()) error("删不掉旧的备份文件：${target.path}")
+        val escaped = target.absolutePath.replace("'", "''")
+        // 故意不走 write{}：VACUUM 不能在事务里跑
+        read { conn.createStatement().use { it.execute("VACUUM INTO '$escaped'") } }
+    }
+
 
     // ------------------------------------------------------------ 设备与配对
 
@@ -406,7 +422,9 @@ class Store(dataDir: File) : AutoCloseable {
         )
     }
 
-    private companion object {
+    companion object {
+        const val DB_NAME = "cookbook-sync.db"
+
         const val PAIR_CODE_TTL_MS = 10 * 60 * 1000L
         const val ORPHAN_GRACE_MS = 24 * 60 * 60 * 1000L
     }

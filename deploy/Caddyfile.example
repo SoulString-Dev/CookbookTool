@@ -1,0 +1,25 @@
+# 把同步服务端放到公网的反代样例（Caddy 负责 TLS，服务端自己只说内网 HTTP）。
+#
+# 家宽 80/443 常被封，方案 §6.3 的做法是把 HTTPS 端口改成 8444、
+# 证书用 DNS-01 签（需要 caddy-dns 插件，见方案里的说明）。
+#
+# 用了这个之后，服务端的两个环境变量也要跟上：
+#   COOKBOOK_TRUSTED_PROXIES=127.0.0.1     # Caddy 用 network_mode: host 时就是它
+#   COOKBOOK_REQUIRE_HTTPS=1               # 裸 HTTP 一律拒绝
+{
+	https_port 8444
+}
+
+cookbook.example.com {
+	# 大图上传：默认上限对 10MB 的图片够用，但别让反代先掐了
+	request_body {
+		max_size 12MB
+	}
+
+	reverse_proxy 127.0.0.1:8080 {
+		# 服务端靠这个头判断「这次请求是 HTTPS」，只信可信来源给的
+		header_up X-Forwarded-Proto {scheme}
+	}
+
+	encode zstd gzip
+}

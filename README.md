@@ -206,6 +206,14 @@ bash scripts/sync-server-image.sh          # 开发机上打镜像 cookbook-sync
 cd deploy && docker compose up -d --build  # 数据落在 deploy/data/
 ```
 
+**一步步装到 NAS 上的完整步骤（含只跑镜像的 compose、systemd 路线、备份与恢复、排错表）
+见 [deploy/README.md](deploy/README.md)。** 备份不用停服务：
+
+```bash
+docker compose exec cookbook-sync \
+  java -jar /app/cookbook-sync.jar --backup /data/backup-$(date +%F).db
+```
+
 接口（都在这几个路径上，`Authorization: Bearer <令牌>`）：
 
 | 方法 | 路径 | 作用 |
@@ -314,6 +322,13 @@ cd deploy && docker compose up -d --build  # 数据落在 deploy/data/
 - **R8 没开**（见上），正式包和调试包体积差不多。
 - 正文里的 Markdown 特殊字符（`#`、`-`、`|`）不做转义，导出成 Markdown 后原样呈现。
 - 备份导入是整库替换，不合并。
+- **NAS 部署这条路没有在这台机器上实跑过**（这台开发机没有 docker，也没有 NAS）。
+  `deploy/` 里的 Dockerfile、两个 compose、systemd unit 与 Caddy 样例都是按着服务端的
+  命令行/环境变量写的，服务端本身有 23 个测试 + `scripts/sync-server-check.sh`
+  的 8 步 curl 自检覆盖（自检脚本会真的跑一次 `--backup`）；但镜像能不能在 UGOS 上起来、
+  卷的权限对不对，要装的时候才知道。
+- **同步的定时是「打开应用时 + 手动」**：没有引入 WorkManager（开发机拉不到这个依赖），
+  所以 App 不在前台时不会自己同步。
 - 需求里提过的两个未来扩展**都没做**：按上次吃的时间加权随机抽菜、食材清单与保质期提醒。
   数据层已经留好了口子（`MealLogDao.lastCookedDays()` 返回每道菜最后一次被吃的天数）。
 
@@ -340,6 +355,10 @@ cd deploy && docker compose up -d --build  # 数据落在 deploy/data/
   立即同步/断开）、首页冲突副本提示条；**推完必须再拉一轮**（水位只靠拉取推进，否则会把自己
   刚推上去的记录当成别人的改动、越同步越假冲突）、按 uuid 原地更新保住本机 id（不触发外键级联
   删掉饮食记录与图片行）、图片按内容寻址落地；16 个服务端测试里多了一条「重推不会造第二个副本」
+- [x] **M9** NAS 部署：`deploy/README.md`（Docker 与 systemd 两条路线、配对、备份/恢复、
+  升级、出公网、排错表）、只跑镜像的 `deploy/docker-compose.nas.yml`、systemd unit 模板、
+  Caddy 反代样例；服务端补上 `--backup`（`VACUUM INTO` 一致性快照，可对运行中的实例执行）、
+  `--require-https`（只信可信反代给的 `X-Forwarded-Proto`），自检脚本加到 8 步
 - [x] **真机反馈后的第一轮修改**：修掉"拍照/相册导入一律失败"（`decodeStream` 在
       `inJustDecodeBounds` 时返回 null，不能拿它的返回值判成败）；历史改餐可改到任意
       一天任意一餐（`moveSlotTo`）；弹窗里加日历选日期；返回键逐层退出模式；新建食谱

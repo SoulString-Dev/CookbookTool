@@ -26,6 +26,13 @@ data class ServerConfig(
     val tombstoneDays: Int = 30,
     /** 打日志用，也回给 /health。 */
     val version: String = "1",
+    /**
+     * 只接受 HTTPS：挂了反向代理做 TLS 时打开。判定看可信反代给的 `X-Forwarded-Proto`，
+     * 不可信来源伪造这个头没有用（那种请求本来就会被拒）。`/health` 不拦，留给监控和自检。
+     */
+    val requireHttps: Boolean = false,
+    /** 备份模式的目标文件。设了就只导出快照然后退出，不起服务。 */
+    val backup: File? = null,
 ) {
     companion object {
         const val USAGE = """
@@ -34,6 +41,8 @@ data class ServerConfig(
   --data <目录>              数据目录（默认 ./data，环境变量 COOKBOOK_DATA）
   --pair-code <6位数字>      固定配对码（默认用一次性配对码，环境变量 COOKBOOK_PAIR_CODE）
   --trusted-proxies <列表>   逗号分隔的可信反代地址（环境变量 COOKBOOK_TRUSTED_PROXIES）
+  --require-https            只接受 HTTPS（挂了反代做 TLS 时打开，环境变量 COOKBOOK_REQUIRE_HTTPS=1）
+  --backup <文件>            导出数据库快照后退出，不起服务（环境变量 COOKBOOK_BACKUP）
   --help                     看这个
 """
 
@@ -48,6 +57,8 @@ data class ServerConfig(
                     ?.split(',')?.map { it.trim() }?.filter { it.isNotEmpty() }
                     ?: listOf("127.0.0.1", "::1"),
                 version = env["COOKBOOK_VERSION"] ?: "1",
+                requireHttps = env["COOKBOOK_REQUIRE_HTTPS"]?.let { it == "1" || it.equals("true", true) } ?: false,
+                backup = env["COOKBOOK_BACKUP"]?.takeIf { it.isNotBlank() }?.let { File(it) },
             )
             var i = 0
             while (i < args.size) {
@@ -64,6 +75,8 @@ data class ServerConfig(
                     "--trusted-proxies" ->
                         cfg = cfg.copy(trustedProxies = value().split(',').map { it.trim() }.filter { it.isNotEmpty() })
 
+                    "--require-https" -> cfg = cfg.copy(requireHttps = true)
+                    "--backup" -> cfg = cfg.copy(backup = File(value()))
                     "--help", "-h" -> {
                         println(USAGE)
                         kotlin.system.exitProcess(0)

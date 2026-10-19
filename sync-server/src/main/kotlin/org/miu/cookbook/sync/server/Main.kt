@@ -1,11 +1,26 @@
 package org.miu.cookbook.sync.server
 
+import java.io.File
 import java.net.InetSocketAddress
 import java.util.concurrent.CountDownLatch
 
 /** 服务端入口。参数见 [ServerConfig.USAGE]。 */
 fun main(args: Array<String>) {
     val config = ServerConfig.fromArgs(args)
+
+    // 备份模式：导出快照就退出，不起服务。适合放在 NAS 的定时任务里，对着**正在跑的**实例执行：
+    //   docker compose exec cookbook-sync java -jar /app/cookbook-sync.jar --backup /data/backup.db
+    config.backup?.let { target ->
+        val db = File(config.dataDir, Store.DB_NAME)
+        if (!db.isFile) {
+            System.err.println("数据目录里没有 ${db.path}，没什么好备份的")
+            kotlin.system.exitProcess(1)
+        }
+        Store(config.dataDir).use { it.backupTo(target) }
+        log("备份好了：${target.absolutePath}（${target.length()} 字节）")
+        return
+    }
+
     val server = SyncServer(config)
     val port = server.start(InetSocketAddress(config.port))
 

@@ -37,7 +37,7 @@ fail() { echo "  ✗ $1" >&2; exit 1; }
 field() { printf '%s' "$1" | python3 -c 'import json,sys; d=json.load(sys.stdin); print(eval(sys.argv[1]))' "$2"; }
 assert_eq() { [[ "$2" == "$3" ]] || fail "$1：期望 [$2]，实际 [$3]"; ok "$1"; }
 
-STEP_TOTAL=7
+STEP_TOTAL=8
 step "1/$STEP_TOTAL 打胖包"
 bash "$ROOT/scripts/build.sh" :sync-server:fatJar >"$WORK/build.log" 2>&1 ||
   { tail -30 "$WORK/build.log" >&2; fail "构建失败"; }
@@ -147,6 +147,21 @@ assert_eq "墓碑不带载荷" "True" "$(field "$PULLED2" '"payload" not in d["r
 HEALTH2=$(curl -fsS "http://127.0.0.1:$PORT/api/v1/health")
 assert_eq "活着的食谱数是 0" "0" "$(field "$HEALTH2" 'd["recipes"]')"
 assert_eq "服务端水位到 2" "2" "$(field "$HEALTH2" 'd["serverRev"]')"
+
+step "8/$STEP_TOTAL 备份模式导出一份能用的库"
+BACKUP="$WORK/backup.db"
+"$TC/jdk/bin/java" -jar "$JAR" --data "$WORK/data" --backup "$BACKUP" >"$WORK/backup.log" 2>&1 ||
+  { cat "$WORK/backup.log" >&2; fail "备份模式没跑通"; }
+[[ -s "$BACKUP" ]] || fail "备份文件是空的"
+head -c 15 "$BACKUP" | grep -q 'SQLite format 3' || fail "备份出来的不是 SQLite 库"
+assert_eq "备份里的食谱数与服务端一致" "0" "$(python3 - "$BACKUP" <<'PY'
+import sqlite3, sys
+c = sqlite3.connect(sys.argv[1])
+print(c.execute("SELECT COUNT(*) FROM recipe WHERE deleted = 0").fetchone()[0])
+PY
+)"
+HEALTH3=$(curl -fsS "http://127.0.0.1:$PORT/api/v1/health")
+assert_eq "备份期间服务照常在跑" "True" "$(field "$HEALTH3" 'd["ok"]')"
 
 echo
 echo "全部通过 ✅"
