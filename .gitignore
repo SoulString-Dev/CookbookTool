@@ -36,3 +36,7 @@ dist/
 # 同步服务端：镜像里用的胖包（由 scripts/sync-server-image.sh 生成）与运行数据
 deploy/cookbook-sync.jar
 deploy/data/
+
+# 工作区级智能体文档（守则 + skill）：只对当前机器/环境成立，不属于项目内容
+AGENTS.md
+.agents/
