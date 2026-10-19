@@ -16,7 +16,7 @@ cookbook.example.com {
 		max_size 12MB
 	}
 
-	reverse_proxy 127.0.0.1:18080 {
+	reverse_proxy 127.0.0.1:18088 {
 		# 服务端靠这个头判断「这次请求是 HTTPS」，只信可信来源给的
 		header_up X-Forwarded-Proto {scheme}
 	}

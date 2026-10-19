@@ -17,7 +17,7 @@ Wants=network-online.target
 Type=simple
 User=yourname
 WorkingDirectory=/volume1/cookbook-sync
-ExecStart=/usr/bin/java -XX:MaxRAMPercentage=75 -jar /volume1/cookbook-sync/cookbook-sync.jar --port 18080 --data /volume1/cookbook-sync/data
+ExecStart=/usr/bin/java -XX:MaxRAMPercentage=75 -jar /volume1/cookbook-sync/cookbook-sync.jar --port 18088 --data /volume1/cookbook-sync/data
 Restart=on-failure
 RestartSec=5
 

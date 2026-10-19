@@ -60,7 +60,7 @@ COOKBOOK_PAIR_CODE: "246810"
 
 App 侧边栏 →「设置」→ 家庭共享：
 
-1. 服务端地址填 `http://<NAS 的局域网 IP>:18080`（**别填 127.0.0.1**，那是手机自己）；
+1. 服务端地址填 `http://<NAS 的局域网 IP>:18088`（**别填 127.0.0.1**，那是手机自己）；
 2. 配对码填上面那六位；
 3. 点「配对」，然后「立即同步」看结果。
 
@@ -73,7 +73,7 @@ NAS 有 Java 17+ 时最省事（`java -version` 查一下，很多 NAS 自带的
 1. 开发机上打包：`bash scripts/build.sh :sync-server:fatJar`
    → `sync-server/build/libs/sync-server-all.jar`
 2. 拷到 NAS，比如 `/volume1/cookbook-sync/cookbook-sync-all.jar`；
-3. 先手动跑一遍看看：`java -jar cookbook-sync-all.jar --port 18080 --data ./data`
+3. 先手动跑一遍看看：`java -jar cookbook-sync-all.jar --port 18088 --data ./data`
 4. 交给 systemd 看着：把 `deploy/cookbook-sync.service` 拷到 `/etc/systemd/system/`，
    按自己的用户名和路径改 `User` 与 `ExecStart`，然后
 
@@ -144,12 +144,12 @@ COOKBOOK_REQUIRE_HTTPS: "1"                   # 裸 HTTP 一律拒绝（/health 
 
 | 现象 | 先看这里 |
 | --- | --- |
-| 手机连不上 | 地址是不是填成了 `127.0.0.1`（要填 NAS 的局域网 IP）；NAS 防火墙放 18080 了吗；在 NAS 上 `curl http://127.0.0.1:18080/api/v1/health` 通不通 |
+| 手机连不上 | 地址是不是填成了 `127.0.0.1`（要填 NAS 的局域网 IP）；NAS 防火墙放 18088 了吗；在 NAS 上 `curl http://127.0.0.1:18088/api/v1/health` 通不通 |
 | 配对码不对 / 过期 | 一次性码 10 分钟换一次，`cat data/pair-code.txt` 拿最新的；或者干脆设固定码 |
 | 401 / 「令牌失效」 | 服务端换过库或换过令牌，App 里点「断开」再重新配对一次 |
 | 429 | 限流（默认每设备 240 次/分钟，配对 30 次/分钟），等一会儿再点 |
 | 图片传不上去 | 单张超过 10MB 会被拒；`blobs/` 所在分区是不是满了；设置页的错误文字会说明是哪一步 |
-| 容器起不来 | `docker compose logs`；宿主端口被占了吗（对外默认 18080，容器里始终 8080）；`data/` 目录的属主对不对 |
+| 容器起不来 | `docker compose logs`；宿主端口被占了吗（对外默认 18088，容器里始终 8080）；`data/` 目录的属主对不对 |
 | 同步一直在转 | 看设置页最后一条错误；服务端 `journalctl`/`docker compose logs -f` 里有 4xx/5xx 的 code |
 
 ---

@@ -182,7 +182,7 @@
     <string name="settings_primary_hint">例如 https://cookbook.example.com:8443</string>
     <string name="settings_primary_help">在外面用它：公网地址或域名，带 http:// 或 https://</string>
     <string name="settings_local_label">局域网地址（可选）</string>
-    <string name="settings_local_hint">例如 http://192.168.1.10:18080</string>
+    <string name="settings_local_hint">例如 http://192.168.1.10:18088</string>
     <string name="settings_local_help">在家时优先走这个，省一趟公网往返；不填也能用</string>
     <string name="settings_local_value">局域网地址：%1$s</string>
     <string name="settings_server_invalid">地址要以 http:// 或 https:// 开头</string>
