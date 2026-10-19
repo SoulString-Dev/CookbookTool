@@ -1,0 +1,25 @@
+# 食谱本同步服务端（家用 NAS 版）。
+#
+# 用法：
+#   1) 开发机上：bash scripts/sync-server-image.sh
+#      （打胖包 → 拷到 deploy/cookbook-sync.jar → 构建 cookbook-sync:1）
+#   2) 本目录下：docker compose up -d --build
+#   3) 看配对码：docker compose logs -f | grep PAIR_CODE
+#
+# 更完整的步骤（含“只在开发机构建、把镜像拷到 NAS”那条路）见 deploy/README.md。
+services:
+  cookbook-sync:
+    build: .
+    image: cookbook-sync:1
+    container_name: cookbook-sync
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    volumes:
+      # 数据（cookbook-sync.db、blobs/、pair-code.txt）都在这里，备份直接拷这个目录
+      - ./data:/data
+    environment:
+      # 固定配对码：填 6 位数字最省事；注掉就用一次性配对码（启动日志与 /data/pair-code.txt 里有）
+      # COOKBOOK_PAIR_CODE: "246810"
+      # 前面挂了反向代理时填反代的地址，服务端才会采信 X-Forwarded-For
+      COOKBOOK_TRUSTED_PROXIES: "127.0.0.1,::1,172.16.0.0/12"

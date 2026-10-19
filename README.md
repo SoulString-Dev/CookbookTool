@@ -168,6 +168,69 @@ thumbs/ab12.jpg        缩略图
 
 主键 id 原样保留，所以食谱-分类-图片-饮食记录之间的引用关系不会错位。
 
+## 家庭共享的同步服务端
+
+一家人各自的手机各存一份库、各拍各的照，**没有中心服务器就没法共享**。所以有了这一块：
+一个跑在家里 NAS 上的小服务端，外加 App 里的同步引擎（引擎还没做，见「进度」里的 M8）。
+
+三个模块的分工：
+
+- `:sync-model` —— 两端共用的**线上格式**（`SyncRecipePayload`、`SyncRecord`、`PushRequest`…）。
+  共用一份是为了不出现「两端字段各写各的」这种最费时间的错位。它故意不带本机自增 id 和
+  图片路径：换台设备那些东西就没有意义了，图片改用内容哈希 `sha256` 引用。
+- `:sync-server` —— 服务端。**零第三方框架**：HTTP 用 JDK 自带的 `com.sun.net.httpserver`，
+  数据库用 `sqlite-jdbc`，JSON 复用 kotlinx-serialization（这台开发机拉不到 Ktor/Netty 之类
+  的新依赖，家用 NAS 上其实也不需要）。
+- `app` —— 同步引擎与设置页（M8 才写）。
+
+一键自检（起一个临时实例，真用 curl 走完整流程，跑完自动清理）：
+
+```bash
+bash scripts/sync-server-check.sh
+```
+
+手动起服务：
+
+```bash
+bash scripts/build.sh :sync-server:fatJar
+.toolchain/jdk/bin/java -jar sync-server/build/libs/sync-server-all.jar --port 8080 --data ./data
+# 启动日志里的 PAIR_CODE= 就是配对码；也写在 <data>/pair-code.txt
+```
+
+用 Docker 起（NAS 上推荐）：
+
+```bash
+bash scripts/sync-server-image.sh          # 开发机上打镜像 cookbook-sync:1
+cd deploy && docker compose up -d --build  # 数据落在 deploy/data/
+```
+
+接口（都在这几个路径上，`Authorization: Bearer <令牌>`）：
+
+| 方法 | 路径 | 作用 |
+| --- | --- | --- |
+| GET | `/api/v1/health` | 体检：水位、活着的食谱数，不需要令牌 |
+| POST | `/api/v1/pair` | 拿配对码换设备令牌（一次性码 10 分钟有效，用过即换） |
+| GET | `/api/v1/sync?since=<水位>&limit=<条数>` | 增量拉取 |
+| POST | `/api/v1/sync` | 推送增量（`upserts` + `deletes`） |
+| PUT/GET | `/api/v1/blobs/<sha256>` | 传/取一张图，按内容寻址 |
+| POST | `/api/v1/blobs/check` | 一次问「这些图你缺哪些」 |
+
+几条容易写错、所以记下来的同步语义：
+
+- **每条记录带自己的 `rev`，水位按记录推进**。拉取的 `nextSince` 是本次最后一条的 `rev`，
+  **不是**服务端全局水位——用全局水位的话，分页途中别人一写，中间那几条就被永久跳过了。
+  推送响应的 `serverRev` 也不要拿来推进 `lastRev`（推送期间别人可能推高它）。
+- **冲突按 `updatedAt` 比，败方存成新 uuid 的副本**，菜名由服务端加「（冲突副本）」后缀。
+  删除不产生副本。`baseRev`（客户端上次见到的水位）用来判断「这条记录你见过没有」：
+  `server_rev > baseRev` 才算冲突，否则直接覆盖。
+- **删除是墓碑不是物理删**：30 天内谁都能拉到「这条没了」，之后由服务端清理线程物理删。
+  客户端收到墓碑只打标记，不动本机的饮食记录与图片。
+- **图片先传后推**：客户端先 `blobs/check` 问缺哪几张、PUT 上去，再推记录。服务端因此只在
+  「上传超过 24 小时且没人引用」时才删孤儿图，避开「图传完了、记录还没推上来」的空窗期。
+- **限流分开两档**：同步接口按设备限流（默认 240/分钟），图片单独一档（1200/分钟，首次同步
+  可能要传几百张）。配对接口按来源 IP 限流——**只有来源地址在可信反代名单里才认
+  `X-Forwarded-For`**，否则伪造一个头就绕过去了。
+
 ## 几条界面约定
 
 - **顶栏常驻**：进详情页、进任何一个子编辑器，顶栏都不消失也不换行（那样点进点出会
@@ -215,7 +278,8 @@ thumbs/ab12.jpg        缩略图
   这台开发机没有 `/dev/kvm`，起不了模拟器，所以剩下的触摸细节、系统相机、Photo Picker
   还是只能装到手机上试。116 个 JVM 单测覆盖了领域逻辑、Room 读写、备份 zip 和主要界面
   （Robolectric 里跑 Compose），其中 6 个是 v1→v2 的数据库迁移测试
-  （自己造一个 v1 库再让 Room 升上来，数据没丢、且迁移出的表结构 Room 认）。**侧边栏条目的点击在 Robolectric 里不正常**（触摸会被抽屉
+  （自己造一个 v1 库再让 Room 升上来，数据没丢、且迁移出的表结构 Room 认）；另有 15 个
+  服务端测试（`bash scripts/build.sh :sync-server:test`，真起进程内 HTTP 服务）。**侧边栏条目的点击在 Robolectric 里不正常**（触摸会被抽屉
   蒙版吃掉，怀疑是测试环境的问题），这个在真机上确认是好的。
 - **Robolectric 里不要测"弹窗里带输入框"的流程**：`AlertDialog` 里只要放 `OutlinedTextField`，
   Compose 就永远 idle 不下来（`AppNotIdleException`，有时直接 OOM）。带输入框的弹窗只能人工验。
@@ -237,6 +301,12 @@ thumbs/ab12.jpg        缩略图
   食谱加 `deleted_at`/`dirty`/`server_rev`，新增 `sync_state` 游标表；界面删除改成**软删**，
   远端墓碑走另一条路（`applyRemoteTombstone`：只打墓碑，不动本机饮食记录与图片）；
   备份格式带上 `uuid`（老备份没有这个字段，按新记录处理）；迁移测试 + 同步地基单测共 15 个
+- [x] **M7** 同步服务端（`:sync-model` + `:sync-server` 两个模块）：两端共用的线上格式、配对换令牌、
+  增量推送/拉取、**每条记录自带 rev 且水位按记录推进**、按 `updatedAt` 判冲突并留「（冲突副本）」、
+  删除走墓碑、图片按 `sha256` 内容寻址 + 批量缺图检查、分档限流与可信反代的 XFF 处理；
+  HTTP 用 JDK 自带的 `com.sun.net.httpserver`、库用 sqlite-jdbc（这台开发机拉不到 Ktor，
+  家用 NAS 上也不需要）。15 个服务端测试（真起进程内 HTTP 服务、真发请求）+
+  `scripts/sync-server-check.sh`（curl 全流程自检）+ `deploy/` 的 Dockerfile 与 compose
 - [x] **真机反馈后的第一轮修改**：修掉"拍照/相册导入一律失败"（`decodeStream` 在
       `inJustDecodeBounds` 时返回 null，不能拿它的返回值判成败）；历史改餐可改到任意
       一天任意一餐（`moveSlotTo`）；弹窗里加日历选日期；返回键逐层退出模式；新建食谱
