@@ -4,7 +4,7 @@ import android.content.Context
 import androidx.annotation.StringRes
 import org.miu.cookbook.R
 
-/** 侧边栏底部可以选的三种外观。 */
+/** 设置页里可以选的三种外观。 */
 enum class ThemeMode(@StringRes val labelRes: Int) {
     SYSTEM(R.string.theme_system),
     LIGHT(R.string.theme_light),

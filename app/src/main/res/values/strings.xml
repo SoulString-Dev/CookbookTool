@@ -3,7 +3,6 @@
     <string name="app_name">食谱本</string>
 
     <string name="drawer_open">打开侧边栏</string>
-    <string name="drawer_close">关闭侧边栏</string>
 
     <string name="dest_recipes">食谱</string>
     <string name="dest_history">饮食历史</string>
@@ -14,8 +13,6 @@
     <string name="history_empty_hint">在食谱页点加号，记录今天吃了什么</string>
 
     <string name="action_add_recipe">添加食谱</string>
-    <string name="action_search">搜索</string>
-    <string name="action_edit">编辑</string>
     <string name="action_delete">删除</string>
     <string name="action_cancel">取消</string>
     <string name="action_confirm">确定</string>
@@ -28,7 +25,6 @@
     <string name="theme_light">日间模式</string>
     <string name="theme_dark">夜间模式</string>
     <string name="action_pick_date">选日期</string>
-    <string name="action_picked">已选</string>
 
     <!-- 搜索栏 -->
     <string name="search_placeholder">搜菜名、分类或原料</string>
@@ -81,7 +77,6 @@
     <string name="section_ingredients">原料</string>
     <string name="section_directions">做法</string>
     <string name="section_notes">备注</string>
-    <string name="recipe_cover_placeholder">还没有图片</string>
 
     <!-- M2：文本编辑 -->
     <string name="recipe_detail_title">食谱详情</string>
@@ -90,7 +85,6 @@
     <string name="recipe_markdown_copied">复制成功</string>
     <string name="recipe_markdown_title">Markdown 源码</string>
     <string name="recipe_markdown_hint">这是这道菜导出的 Markdown，可以用来复制到别处。</string>
-    <string name="recipe_edit_categories">编辑分类</string>
     <string name="recipe_title_hint">菜名</string>
     <string name="recipe_section_edit">编辑</string>
     <string name="recipe_section_empty">还没写</string>
@@ -113,13 +107,11 @@
     <string name="image_take_photo">拍照</string>
     <string name="image_pick_gallery">从相册选择</string>
     <string name="image_set_cover">设为列表图片</string>
-    <string name="image_is_cover">列表图片</string>
     <string name="image_delete">删除这张</string>
     <string name="image_delete_title">删除图片</string>
     <string name="image_delete_message">删除后就找不回来了。</string>
     <string name="image_import_failed">这张图片读不出来</string>
     <string name="image_full">最多放六张图片</string>
-    <string name="image_view">查看大图</string>
     <string name="image_edit">编辑图片</string>
     <string name="image_empty_hint">还没有图片</string>
     <string name="image_drag_hint">按住缩略图可以左右拖动排序。</string>
@@ -134,11 +126,8 @@
     <string name="meal_record_keep_only">只保存，不记录</string>
     <string name="meal_record_exit">退出记录</string>
     <string name="meal_record_add_recipe">新建食谱并记录</string>
-    <string name="meal_recorded">记下了：%1$s</string>
-    <string name="meal_history_title">饮食历史</string>
     <string name="meal_history_of_recipe">「%1$s」的饮食历史</string>
     <string name="meal_history_empty">这道菜还没记录过</string>
-    <string name="meal_history_empty_hint">在食谱页点右下角的加号，就能记下今天吃了什么</string>
     <string name="meal_day_empty">这一天没有记录</string>
     <string name="meal_day_edit">编辑这一天</string>
     <string name="meal_day_delete">删除这一天</string>
@@ -149,8 +138,6 @@
     <string name="meal_move_hint">把某一餐改到别的日子、别的餐段都行；那边要是已经有记录，这几道菜会并进去。</string>
     <string name="meal_move_title">改到哪一天哪一餐</string>
     <string name="meal_move_confirm">改到这一天</string>
-    <string name="meal_edit_slot">这顿改到</string>
-    <string name="meal_edit_date">这天改到</string>
     <string name="meal_date_prev">前一天</string>
     <string name="meal_date_next">后一天</string>
     <string name="meal_swapped">两餐已经交换</string>
@@ -159,7 +146,6 @@
     <string name="meal_history_delete_message">确定删除选中的 %1$d 天记录吗？</string>
     <string name="meal_history_selection_none">点日期来选</string>
     <string name="meal_history_selection_count">已选 %1$d 天</string>
-    <string name="meal_view_recipe">查看食谱</string>
     <string name="meal_history_view">查看饮食历史</string>
     <!-- 备份与恢复 -->
     <string name="backup_menu">备份与恢复</string>

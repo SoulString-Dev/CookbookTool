@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  allowBackup 已经是 false，这里再写一份规则是为了 Android 12+ 的「设备间迁移」也不搬数据：
+  同步令牌在 SharedPreferences 里，跟着备份走等于把家门的钥匙一起拷出去。
+-->
+<data-extraction-rules>
+    <cloud-backup>
+        <exclude domain="root" path="." />
+    </cloud-backup>
+    <device-transfer>
+        <exclude domain="root" path="." />
+    </device-transfer>
+</data-extraction-rules>

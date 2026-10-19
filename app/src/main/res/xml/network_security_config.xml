@@ -7,6 +7,9 @@
   地址填错了也连不到别人家去。将来要是给服务端套上 HTTPS，把这个文件和 manifest 里
   的 android:networkSecurityConfig 一起删掉即可。
 -->
-<network-security-config>
-    <base-config cleartextTrafficPermitted="true" />
+<network-security-config xmlns:tools="http://schemas.android.com/tools">
+    <!-- lint 的 InsecureBaseConfiguration 会警告明文；这里是刻意的取舍，理由见上面注释 -->
+    <base-config
+        cleartextTrafficPermitted="true"
+        tools:ignore="InsecureBaseConfiguration" />
 </network-security-config>

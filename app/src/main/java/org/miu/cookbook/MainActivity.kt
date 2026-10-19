@@ -23,7 +23,7 @@ class MainActivity : ComponentActivity() {
         enableEdgeToEdge()
         val container = (application as CookbookApplication).container
         setContent {
-            // 外观由侧边栏底部决定，所以状态得放在主题外面
+            // 外观改在设置页里，所以状态得放在主题外面
             var themeMode by remember { mutableStateOf(ThemePreferences.load(this)) }
             val darkTheme = when (themeMode) {
                 ThemeMode.SYSTEM -> isSystemInDarkTheme()

@@ -39,7 +39,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.produceState
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
@@ -437,9 +437,10 @@ private fun DeleteRecipesDialog(
     onDismiss: () -> Unit,
     onConfirm: () -> Unit,
 ) {
-    val mealLogCount by produceState(initialValue = 0, key1 = recipeIds) {
-        value = repository.countMealLogs(recipeIds)
-    }
+    // 用 remember + LaunchedEffect 而不是 produceState：lint 的 ProduceStateDoesNotAssignValue
+    // 会把委托写法里的赋值看成误报，这里绕开它，行为一样
+    var mealLogCount by remember(recipeIds) { mutableIntStateOf(0) }
+    LaunchedEffect(recipeIds) { mealLogCount = repository.countMealLogs(recipeIds) }
     val single = recipeIds.size == 1
 
     AlertDialog(
