@@ -7,9 +7,11 @@ import org.miu.cookbook.domain.search.FuzzySearch
 import org.miu.cookbook.ui.sidebar.railLabel
 
 /**
- * 侧栏选中分类后的排序：**不隐藏任何菜**，只是把带这个分类的提前。
- * 这条是用户明确要求的（「是都要显示，但是在分类页面里，当前分类有的食谱更优先显示」），
- * 别顺手改成过滤。
+ * 侧栏选中分类后的两种口径（用户最终定的）：
+ * - **不搜索**时只看这个分类（[onlyInCategory]）；
+ * - **搜索**时不过滤，只是把带这个分类的提前（[boostCategory]）。
+ *
+ * 最初实现成「一律只置顶不过滤」，被用户纠正过一次，别再改回去。
  */
 class CategoryBoostTest {
 
@@ -56,6 +58,23 @@ class CategoryBoostTest {
     fun `分类里一道菜都没有时，列表还是全部菜`() {
         val items = listOf(item(1, "红烧肉", "家常菜"), item(2, "土豆丝", "家常菜"))
         assertEquals(listOf(1L, 2L), items.boostCategory("甜点").map { it.id })
+    }
+
+    @Test
+    fun `不搜索时只看这个分类，选全部就原样返回`() {
+        val items = listOf(
+            item(1, "红烧肉", "家常菜"),
+            item(2, "土豆丝"),
+            item(3, "可乐鸡翅", "家常菜"),
+        )
+        assertEquals(listOf(1L, 3L), items.onlyInCategory("家常菜").map { it.id })
+        assertEquals(items, items.onlyInCategory(""))
+    }
+
+    @Test
+    fun `分类里一道菜都没有时，列表是空的`() {
+        val items = listOf(item(1, "红烧肉", "家常菜"))
+        assertTrue(items.onlyInCategory("甜点").isEmpty())
     }
 
     @Test

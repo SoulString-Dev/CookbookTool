@@ -120,11 +120,11 @@
     <string name="meal_record_title">记录饮食</string>
     <string name="meal_record_hint">输入菜名或首字母找菜，点一下就是它。</string>
     <string name="meal_record_search_hint">今天吃了什么？</string>
+    <string name="meal_record_exit">退出记录</string>
     <string name="meal_record_date">日期</string>
     <string name="meal_record_slot">哪一餐</string>
     <string name="meal_record_confirm">记下这一顿</string>
     <string name="meal_record_keep_only">只保存，不记录</string>
-    <string name="meal_record_exit">退出记录</string>
     <string name="meal_record_add_recipe">新建食谱并记录</string>
     <string name="meal_history_of_recipe">「%1$s」的饮食历史</string>
     <string name="meal_history_empty">这道菜还没记录过</string>
@@ -205,6 +205,8 @@
     <string name="conflict_banner_hint">各留了一份副本，名字后面带「（冲突副本）」。挑一份想要的，另一份删掉即可。</string>
     <!-- 分类侧栏 -->
     <string name="rail_all">全部</string>
+    <string name="rail_empty_title">这个分类还没有食谱</string>
+    <string name="rail_empty_hint">去食谱详情页给它加上这个分类，或者点「全部」看所有食谱</string>
     <string name="category_edit_title">编辑分类</string>
     <string name="category_edit_all_title">所有分类</string>
     <string name="category_edit_all_hint">勾上的会出现在食谱页左边的分类栏里。</string>

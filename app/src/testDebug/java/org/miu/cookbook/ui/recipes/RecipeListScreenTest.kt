@@ -4,6 +4,7 @@ import androidx.activity.ComponentActivity
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.hasSetTextAction
+import androidx.compose.ui.test.getBoundsInRoot
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithText
@@ -14,6 +15,7 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import org.junit.After
 import org.junit.Rule
+import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.miu.cookbook.CookbookApplication
@@ -56,6 +58,9 @@ class RecipeListScreenTest {
         newRecipeRequested: Boolean = false,
         selectionRequested: Boolean = false,
         onOpen: (Long) -> Unit = {},
+        railEnabled: Boolean = false,
+        railCategories: List<org.miu.cookbook.ui.sidebar.RailCategory> = emptyList(),
+        railSelectedUuid: String = "",
     ) {
         val c = container
         compose.setContent {
@@ -68,6 +73,9 @@ class RecipeListScreenTest {
                         onNewRecipeHandled = {},
                         selectionRequested = selectionRequested,
                         onSelectionRequestedHandled = {},
+                        railEnabled = railEnabled,
+                        railCategories = railCategories,
+                        railSelectedUuid = railSelectedUuid,
                     )
                 }
             }
@@ -102,6 +110,46 @@ class RecipeListScreenTest {
         waitForText("找到 1 道")
         compose.onNodeWithText("番茄炒蛋").assertIsDisplayed()
         compose.onNodeWithText("土豆丝").assertDoesNotExist()
+    }
+
+    /** 建两道菜，把 [withCategory] 加上「家常菜」，返回分类的 uuid。 */
+    private fun seedWithCategory(withCategory: String): String = runBlocking {
+        val categoryId = container.repository.ensureCategory("家常菜")
+        val uuid = container.repository.categories.first().first { it.id == categoryId }.uuid
+        val target = container.repository.recipeList.first().first { it.recipe.title == withCategory }
+        container.repository.setCategories(target.recipe.id, setOf(categoryId))
+        uuid
+    }
+
+    @Test
+    fun `不搜索时，选中的分类只看这个分类的菜`() {
+        seed("红烧肉", "土豆丝")
+        val hot = seedWithCategory("红烧肉")
+        launch(
+            railEnabled = true,
+            railCategories = listOf(org.miu.cookbook.ui.sidebar.RailCategory(hot, "家常菜")),
+            railSelectedUuid = hot,
+        )
+        waitForText("红烧肉")
+        compose.onNodeWithText("土豆丝").assertDoesNotExist()
+    }
+
+    @Test
+    fun `搜索时分类不过滤，只是把命中的排前面`() {
+        seed("红烧肉", "土豆烧肉")
+        val hot = seedWithCategory("红烧肉")
+        launch(
+            railEnabled = true,
+            railCategories = listOf(org.miu.cookbook.ui.sidebar.RailCategory(hot, "家常菜")),
+            railSelectedUuid = hot,
+        )
+        waitForText("红烧肉")
+
+        compose.onNode(hasSetTextAction()).performTextInput("肉")
+        waitForText("找到 2 道")
+        val hit = compose.onNodeWithText("红烧肉").getBoundsInRoot().top
+        val rest = compose.onNodeWithText("土豆烧肉").getBoundsInRoot().top
+        assertTrue("带分类的应该排在前面", hit < rest)
     }
 
     @Test

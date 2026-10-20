@@ -39,8 +39,8 @@ data class RecipeListItem(
 }
 
 /**
- * 侧栏选中某个分类后的排序：**不过滤**，只是把带这个分类的排到前面，
- * 两段各自保持传进来的次序（也就是「全部」原来的时间顺序）。
+ * 搜到的东西里，把带这个分类的提到最前（搜索时才用；两段各自保持匹配度的次序）。
+ * 不搜索时的做法是 [onlyInCategory]——那时候只看这个分类。
  */
 fun List<RecipeListItem>.boostCategory(uuid: String): List<RecipeListItem> =
     if (uuid.isEmpty()) {
@@ -48,6 +48,10 @@ fun List<RecipeListItem>.boostCategory(uuid: String): List<RecipeListItem> =
     } else {
         partition { uuid in it.categoryUuids }.let { (hit, rest) -> hit + rest }
     }
+
+/** 没在搜索、又选了分类：只看这个分类里的菜（选「全部」时原样返回）。 */
+fun List<RecipeListItem>.onlyInCategory(uuid: String): List<RecipeListItem> =
+    if (uuid.isEmpty()) this else filter { uuid in it.categoryUuids }
 
 /** 详情页渲染用。 */
 data class RecipeDetailUi(

@@ -21,6 +21,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.List
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Close
@@ -119,10 +120,12 @@ fun RecipeListScreen(
     var recordTarget by remember { mutableStateOf<Pair<Long, String>?>(null) }
     var recordTargetAllowSkip by remember { mutableStateOf(false) }
 
-    // 侧栏选了分类时**不过滤**：带这个分类的排到最前面，其余照旧按时间跟在后面。
-    // 有搜索词时也一样——先按关键词排，再把这个分类的提前，两段各自保持原来的次序。
+    // 两个口径（用户定的）：
+    // - 不搜索时，选了分类就**只看这个分类**的菜；
+    // - 搜索时不过滤，而是把带这个分类的排到最前、其余照旧按匹配度跟在后面。
     val visible = remember(allItems, query, railSelectedUuid) {
-        FuzzySearch.rank(allItems, query) { it.searchDocument }.boostCategory(railSelectedUuid)
+        val ranked = FuzzySearch.rank(allItems, query) { it.searchDocument }
+        if (query.isBlank()) ranked.onlyInCategory(railSelectedUuid) else ranked.boostCategory(railSelectedUuid)
     }
 
     // 右下角加号（在 CookbookRoot 里）请求新建食谱
@@ -173,116 +176,126 @@ fun RecipeListScreen(
         }
     }
 
-    Row(modifier = modifier.fillMaxSize()) {
-        if (railEnabled) {
-            CategoryRail(
-                categories = railCategories,
-                selectedUuid = railSelectedUuid,
-                onSelect = onRailSelect,
-                onEdit = onEditCategories,
-            )
-        }
-        Box(Modifier.weight(1f).fillMaxHeight()) {
-            when {
-                allItems.isEmpty() -> EmptyState(
-                    icon = Icons.AutoMirrored.Filled.List,
-                    title = stringResource(R.string.recipes_empty_title),
-                    hint = stringResource(R.string.recipes_empty_hint),
-                    modifier = Modifier.align(Alignment.Center),
+    Box(modifier = modifier.fillMaxSize()) {
+        Row(modifier = modifier.fillMaxSize()) {
+            if (railEnabled) {
+                CategoryRail(
+                    categories = railCategories,
+                    selectedUuid = railSelectedUuid,
+                    onSelect = onRailSelect,
+                    onEdit = onEditCategories,
                 )
+            }
+            Box(Modifier.weight(1f).fillMaxHeight()) {
+                when {
+                    allItems.isEmpty() -> EmptyState(
+                        icon = Icons.AutoMirrored.Filled.List,
+                        title = stringResource(R.string.recipes_empty_title),
+                        hint = stringResource(R.string.recipes_empty_hint),
+                        modifier = Modifier.align(Alignment.Center),
+                    )
 
-                visible.isEmpty() -> EmptyState(
-                    icon = Icons.Filled.Search,
-                    title = stringResource(R.string.search_no_result_title, query),
-                    hint = stringResource(R.string.search_no_result_hint),
-                    modifier = Modifier.align(Alignment.Center),
-                )
+                    // 按分类看的时候空了，说的得是分类的事，别拿「没搜到」去糊人
+                    visible.isEmpty() && query.isBlank() -> EmptyState(
+                        icon = Icons.Filled.Search,
+                        title = stringResource(R.string.rail_empty_title),
+                        hint = stringResource(R.string.rail_empty_hint),
+                        modifier = Modifier.align(Alignment.Center),
+                    )
 
-                else -> LazyColumn(
-                    modifier = Modifier.fillMaxSize(),
-                    contentPadding = PaddingValues(top = TopBarArea, bottom = 96.dp),
-                ) {
-                    // 冲突副本提示：同步时两边都改了同一道菜才会出现，点不掉，删掉副本它自己消失
-                    if (conflictCount > 0 && query.isBlank()) {
-                        item(key = "conflicts") { ConflictBanner(count = conflictCount) }
-                    }
-                    if (query.isNotBlank()) {
-                        item(key = "count") {
-                            Text(
-                                text = stringResource(R.string.search_result_count, visible.size),
-                                style = MaterialTheme.typography.labelMedium,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                modifier = Modifier.padding(start = 20.dp, bottom = 4.dp),
+                    visible.isEmpty() -> EmptyState(
+                        icon = Icons.Filled.Search,
+                        title = stringResource(R.string.search_no_result_title, query),
+                        hint = stringResource(R.string.search_no_result_hint),
+                        modifier = Modifier.align(Alignment.Center),
+                    )
+
+                    else -> LazyColumn(
+                        modifier = Modifier.fillMaxSize(),
+                        contentPadding = PaddingValues(top = TopBarArea, bottom = 96.dp),
+                    ) {
+                        // 冲突副本提示：同步时两边都改了同一道菜才会出现，点不掉，删掉副本它自己消失
+                        if (conflictCount > 0 && query.isBlank()) {
+                            item(key = "conflicts") { ConflictBanner(count = conflictCount) }
+                        }
+                        if (query.isNotBlank()) {
+                            item(key = "count") {
+                                Text(
+                                    text = stringResource(R.string.search_result_count, visible.size),
+                                    style = MaterialTheme.typography.labelMedium,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    modifier = Modifier.padding(start = 20.dp, bottom = 4.dp),
+                                )
+                            }
+                        }
+                        items(visible, key = { it.id }) { item ->
+                            RecipeListRowItem(
+                                item = item,
+                                selecting = selecting,
+                                selected = item.id in selectedIds,
+                                onOpen = { onOpenRecipe(item.id) },
+                                onToggleSelection = { selectedIds = selectedIds.toggle(item.id) },
+                                onEditRecipe = { onEditRecipe(item.id) },
+                                onEditCategories = { categoryTargets = listOf(item.id) },
+                                onDelete = { deleteTargets = listOf(item.id) },
+                            )
+                            HorizontalDivider(
+                                modifier = Modifier.padding(start = 102.dp),
+                                color = MaterialTheme.colorScheme.outlineVariant,
                             )
                         }
                     }
-                    items(visible, key = { it.id }) { item ->
-                        RecipeListRowItem(
-                            item = item,
-                            selecting = selecting,
-                            selected = item.id in selectedIds,
-                            onOpen = { onOpenRecipe(item.id) },
-                            onToggleSelection = { selectedIds = selectedIds.toggle(item.id) },
-                            onEditRecipe = { onEditRecipe(item.id) },
-                            onEditCategories = { categoryTargets = listOf(item.id) },
-                            onDelete = { deleteTargets = listOf(item.id) },
+                }
+
+                if (allItems.isNotEmpty() && !recording) {
+                    if (selecting) {
+                        SelectionBar(
+                            count = selectedIds.size,
+                            onCancel = {
+                                selecting = false
+                                selectedIds = emptySet()
+                            },
+                            onSetCategories = {
+                                if (selectedIds.isNotEmpty()) categoryTargets = selectedIds.toList()
+                            },
+                            onDelete = {
+                                if (selectedIds.isNotEmpty()) deleteTargets = selectedIds.toList()
+                            },
+                            modifier = Modifier.align(Alignment.TopCenter),
                         )
-                        HorizontalDivider(
-                            modifier = Modifier.padding(start = 102.dp),
-                            color = MaterialTheme.colorScheme.outlineVariant,
+                    } else {
+                        RecipeSearchBar(
+                            query = query,
+                            onQueryChange = { query = it },
+                            modifier = Modifier.align(Alignment.TopCenter),
                         )
                     }
                 }
             }
+        }
 
-            if (allItems.isNotEmpty() && !recording) {
-                if (selecting) {
-                    SelectionBar(
-                        count = selectedIds.size,
-                        onCancel = {
-                            selecting = false
-                            selectedIds = emptySet()
-                        },
-                        onSetCategories = {
-                            if (selectedIds.isNotEmpty()) categoryTargets = selectedIds.toList()
-                        },
-                        onDelete = {
-                            if (selectedIds.isNotEmpty()) deleteTargets = selectedIds.toList()
-                        },
-                        modifier = Modifier.align(Alignment.TopCenter),
-                    )
-                } else {
-                    RecipeSearchBar(
-                        query = query,
-                        onQueryChange = { query = it },
-                        modifier = Modifier.align(Alignment.TopCenter),
-                    )
-                }
-            }
-
-            if (recording) {
-                // 50% 黑蒙版：点空白处退出记录
-                Box(
-                    modifier = Modifier
-                        .matchParentSize()
-                        .background(Color.Black.copy(alpha = 0.5f))
-                        .clickable { recording = false },
-                )
-                RecordPanel(
-                    query = recordQuery,
-                    onQueryChange = { recordQuery = it },
-                    candidates = remember(allItems, recordQuery) {
-                        FuzzySearch.rank(allItems, recordQuery) { it.searchDocument }
-                    },
-                    onExit = { recording = false },
-                    onPick = { item ->
-                        recordTargetAllowSkip = false
-                        recordTarget = item.id to item.title
-                    },
-                    onAddRecipe = { newRecipeRequest = NewRecipeRequest(recordQuery, thenRecord = true) },
-                    modifier = Modifier.align(Alignment.TopCenter),
-                )
-            }
+        if (recording) {
+            // 50% 黑蒙版：点空白处退出记录
+            Box(
+                modifier = Modifier
+                    .matchParentSize()
+                    .background(Color.Black.copy(alpha = 0.5f))
+                    .clickable { recording = false },
+            )
+            RecordPanel(
+                query = recordQuery,
+                onQueryChange = { recordQuery = it },
+                candidates = remember(allItems, recordQuery) {
+                    FuzzySearch.rank(allItems, recordQuery) { it.searchDocument }
+                },
+                onExit = { recording = false },
+                onPick = { item ->
+                    recordTargetAllowSkip = false
+                    recordTarget = item.id to item.title
+                },
+                onAddRecipe = { newRecipeRequest = NewRecipeRequest(recordQuery, thenRecord = true) },
+                modifier = Modifier.align(Alignment.TopCenter),
+            )
         }
     }
 
@@ -538,9 +551,10 @@ private fun RecordPanel(
     ) {
         Column(Modifier.padding(bottom = 8.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
+                // 这个是「退出记录模式」，所以用返回箭头而不是 ×：× 会让人当成本地清除输入。
                 IconButton(onClick = onExit) {
                     Icon(
-                        imageVector = Icons.Filled.Close,
+                        imageVector = Icons.AutoMirrored.Filled.ArrowBack,
                         contentDescription = stringResource(R.string.meal_record_exit),
                     )
                 }
