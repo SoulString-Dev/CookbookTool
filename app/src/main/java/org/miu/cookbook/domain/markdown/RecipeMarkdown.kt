@@ -202,10 +202,29 @@ object RecipeMarkdown {
         val rest = tokens.drop(1)
         return if (rest.size == 1) {
             IngredientLine(name = name, amount = rest[0])
-        } else if (rest[0].all { it.isDigit() }) {
+        } else if (isAmount(rest[0])) {
             IngredientLine(name = name, amount = rest[0], unit = rest.drop(1).joinToString(""))
         } else {
             IngredientLine(name = name, amount = rest.joinToString(" "))
         }
+    }
+
+    /**
+     * 「1」「2」「1.5」「0.5」都算量，其中小数点只认一个。
+     *
+     * 以前只认纯整数，`1.5 勺` 会被整个当成量、`unit` 留空；界面上把 1 改成 2 再改回 1.5，
+     * 量词就永久丢了（往返一次字段漂移一次）。
+     */
+    private fun isAmount(token: String): Boolean {
+        if (token.isEmpty() || token.none { it.isDigit() }) return false
+        var seenDot = false
+        for (ch in token) {
+            when {
+                ch.isDigit() -> Unit
+                ch == '.' && !seenDot -> seenDot = true
+                else -> return false
+            }
+        }
+        return true
     }
 }

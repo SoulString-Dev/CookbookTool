@@ -97,6 +97,26 @@ class RecipeMarkdownTest {
     }
 
     @Test
+    fun `带小数点的量也能拆出量词`() {
+        val text = RecipeMarkdown.serialize(
+            MarkdownRecipe(
+                title = "汤",
+                ingredients = listOf(
+                    IngredientLine("水", "1.5", "升"),
+                    IngredientLine("盐", "0.5", "勺"),
+                    IngredientLine("葱", "适量"),
+                ),
+            ),
+        )
+
+        val parsed = RecipeMarkdown.parse(text).ingredients
+
+        assertEquals(IngredientLine("水", "1.5", "升"), parsed[0])
+        assertEquals(IngredientLine("盐", "0.5", "勺"), parsed[1])
+        assertEquals("适量", parsed[2].amount)
+    }
+
+    @Test
     fun `二次往返稳定`() {
         val once = RecipeMarkdown.serialize(sample)
         val twice = RecipeMarkdown.serialize(RecipeMarkdown.parse(once))

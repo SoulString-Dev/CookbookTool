@@ -42,6 +42,8 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.listSaver
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -54,6 +56,7 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import org.miu.cookbook.R
 import org.miu.cookbook.data.CookbookRepository
@@ -67,6 +70,9 @@ import org.miu.cookbook.ui.history.RecordMealDialog
 
 /** 顶部那条浮动栏（搜索或多选）的高度，列表要给它让出位置。 */
 private val TopBarArea = 80.dp
+
+/** 搜索防抖：停手这么久之后才真正跑一遍模糊匹配。 */
+private const val SEARCH_DEBOUNCE_MILLIS = 150L
 
 /**
  * 食谱列表页：
@@ -109,25 +115,44 @@ fun RecipeListScreen(
     val conflictCount by repository.conflictCopies.collectAsStateWithLifecycle(initialValue = 0)
     val allItems = remember(rows) { rows.map { it.toListItem(container.filesDir) } }
 
-    var query by remember { mutableStateOf("") }
-    var selecting by remember { mutableStateOf(false) }
-    var selectedIds by remember { mutableStateOf(emptySet<Long>()) }
+    // 转屏（以及进程重建）之后这些状态要还在：搜到一半的词、勾了哪些、是不是在记录模式
+    var query by rememberSaveable { mutableStateOf("") }
+    var selecting by rememberSaveable { mutableStateOf(false) }
+    var selectedIds by rememberSaveable(
+        stateSaver = listSaver<Set<Long>, Long>(save = { it.toList() }, restore = { it.toSet() }),
+    ) { mutableStateOf(emptySet<Long>()) }
     var deleteTargets by remember { mutableStateOf<List<Long>?>(null) }
     var categoryTargets by remember { mutableStateOf<List<Long>?>(null) }
     var newRecipeRequest by remember { mutableStateOf<NewRecipeRequest?>(null) }
 
     // 记录模式：50% 黑蒙版 + 顶上一条搜索栏，点候选食谱弹「记下这一顿」
-    var recording by remember { mutableStateOf(false) }
-    var recordQuery by remember { mutableStateOf("") }
+    var recording by rememberSaveable { mutableStateOf(false) }
+    var recordQuery by rememberSaveable { mutableStateOf("") }
     var recordTarget by remember { mutableStateOf<Pair<Long, String>?>(null) }
     var recordTargetAllowSkip by remember { mutableStateOf(false) }
 
     // 两个口径（用户定的）：
     // - 不搜索时，选了分类就**只看这个分类**的菜；
     // - 搜索时不过滤，而是把带这个分类的排到最前、其余照旧按匹配度跟在后面。
-    val visible = remember(allItems, query, railSelectedUuid) {
-        val ranked = FuzzySearch.rank(allItems, query) { it.searchDocument }
-        if (query.isBlank()) ranked.onlyInCategory(railSelectedUuid) else ranked.boostCategory(railSelectedUuid)
+    // 输入框里的字和「真正用来过滤的字」分两档：每敲一个字符都全文跑一遍模糊匹配，
+    // 在几百道菜上是能感觉出来的卡顿。停手一小会儿再算。
+    var rankedQuery by remember { mutableStateOf("") }
+    LaunchedEffect(query) {
+        if (query.isBlank()) {
+            rankedQuery = ""
+        } else {
+            delay(SEARCH_DEBOUNCE_MILLIS)
+            rankedQuery = query
+        }
+    }
+
+    val visible = remember(allItems, rankedQuery, railSelectedUuid) {
+        val ranked = FuzzySearch.rank(allItems, rankedQuery) { it.searchDocument }
+        if (rankedQuery.isBlank()) {
+            ranked.onlyInCategory(railSelectedUuid)
+        } else {
+            ranked.boostCategory(railSelectedUuid)
+        }
     }
 
     // 右下角加号（在 CookbookRoot 里）请求新建食谱

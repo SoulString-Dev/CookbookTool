@@ -39,7 +39,6 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -74,7 +73,8 @@ fun MealHistoryScreen(
 ) {
     val container = LocalAppContainer.current
     val repository = container.repository
-    val scope = rememberCoroutineScope()
+    // 删一整天、删多选同样不该因为「返回了一下」就半途而废
+    val appScope = container.appScope
 
     val rows by repository.mealHistory.collectAsStateWithLifecycle(initialValue = emptyList())
     val days = remember(rows) { rows.toHistoryDays(container.filesDir) }
@@ -181,7 +181,7 @@ fun MealHistoryScreen(
             onDismiss = { deleteEpoch = null },
             onConfirm = {
                 deleteEpoch = null
-                scope.launch { repository.deleteMealDay(day.epochDay) }
+                appScope.launch { repository.deleteMealDay(day.epochDay) }
             },
         )
     }
@@ -206,7 +206,7 @@ fun MealHistoryScreen(
                     deleteSelection = false
                     selecting = false
                     selectedDays = emptySet()
-                    scope.launch { repository.deleteMealLogs(ids) }
+                    appScope.launch { repository.deleteMealLogs(ids) }
                 }) {
                     Text(
                         text = stringResource(R.string.delete_confirm),

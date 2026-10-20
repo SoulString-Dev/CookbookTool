@@ -23,9 +23,11 @@ import org.miu.cookbook.data.db.AppDatabase
 import org.miu.cookbook.data.db.ContentSection
 import org.miu.cookbook.data.db.MealLogEntity
 import org.miu.cookbook.data.db.MealLogRow
+import org.miu.cookbook.data.image.ImageStore
 import org.miu.cookbook.data.image.ImportedImage
 import org.miu.cookbook.data.backup.BackupArchive
 import org.miu.cookbook.domain.backup.BackupCodec
+import org.miu.cookbook.domain.backup.BackupCategory
 import org.miu.cookbook.domain.backup.BackupFile
 import org.miu.cookbook.domain.backup.BackupImage
 import org.miu.cookbook.domain.backup.BackupMealLog
@@ -574,6 +576,23 @@ class CookbookRepositoryTest {
     }
 
     @Test
+    fun `导入时目标目录已经存在，图片照样能进去，旧文件留着当孤儿`() = runBlocking {
+        seedEverything()
+        val bytes = ByteArrayOutputStream()
+            .also { repository.exportBackup(it) }
+            .toByteArray()
+
+        // rename 覆盖不了已存在的目录，会走「逐个拷进去」那条慢路径
+        File(baseDir, "images/old.jpg").writeBytes(byteArrayOf(7))
+
+        repository.importBackup(ByteArrayInputStream(bytes))
+
+        assertTrue(File(baseDir, "images/real.jpg").isFile)
+        // 旧文件不在这里删：内容寻址的图可能还被别的菜引用着，清孤儿交给同步收尾
+        assertEquals(7.toByte(), File(baseDir, "images/old.jpg").readBytes()[0])
+    }
+
+    @Test
     fun `备份里没有的图片文件，导入时那条记录会被丢掉而不是报错`() = runBlocking {
         val recipeId = repository.createRecipe("有记录没图")
         repository.addImage(recipeId, imported("ghost"))
@@ -702,6 +721,60 @@ class CookbookRepositoryTest {
     }
 
     /** 交给 importBackup 的必须是 zip（和界面导出的格式一致），不是裸 JSON。 */
+    @Test
+    fun `备份里有两个同名分类时导入被拦下来，旧数据还在`() = runBlocking {
+        val keep = seedEverything()
+        val backup = BackupFile.create(
+            categories = listOf(
+                BackupCategory(id = 1, name = "家常菜", sortOrder = 0),
+                BackupCategory(id = 2, name = "家常菜", sortOrder = 1),
+            ),
+            recipes = listOf(BackupRecipe(id = 5, title = "新的", createdAt = 1, updatedAt = 1)),
+        )
+
+        val error = assertThrows(IllegalArgumentException::class.java) {
+            runBlocking { repository.importBackup(ByteArrayInputStream(zipOf(backup))) }
+        }
+
+        assertTrue(error.message.orEmpty().contains("家常菜"))
+        // 整库一点没动：拦在动库之前
+        assertEquals(listOf(keep), repository.recipeList.first().map { it.recipe.id })
+        assertEquals(listOf("家常菜"), repository.categories.first().map { it.name })
+    }
+
+    @Test
+    fun `备份里写错的图片哈希不轻信，以磁盘上的文件为准`() = runBlocking {
+        File(baseDir, "images").mkdirs()
+        File(baseDir, "images/a.jpg").writeBytes(byteArrayOf(1, 2, 3, 4))
+        val real = ImageStore.sha256Of(File(baseDir, "images/a.jpg")).orEmpty()
+        val backup = BackupFile.create(
+            recipes = listOf(
+                BackupRecipe(
+                    id = 1,
+                    title = "有图",
+                    createdAt = 1,
+                    updatedAt = 1,
+                    images = listOf(
+                        BackupImage(
+                            file = "images/a.jpg",
+                            width = 10,
+                            height = 10,
+                            sortOrder = 0,
+                            isCover = true,
+                            sha256 = "deadbeef",
+                        ),
+                    ),
+                ),
+            ),
+        )
+
+        repository.importBackup(ByteArrayInputStream(zipOf(backup)))
+
+        val image = repository.images(1).single()
+        assertEquals(real, image.sha256)
+        assertNotEquals("deadbeef", image.sha256)
+    }
+
     private fun zipOf(backup: BackupFile): ByteArray =
         ByteArrayOutputStream().also { BackupArchive.write(backup, baseDir, it) }.toByteArray()
 

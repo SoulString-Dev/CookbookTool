@@ -277,23 +277,26 @@ class CookbookRepository(
      * 上限不能只靠界面上「隐藏加号」来保证，导入备份这条路也得挡住。
      */
     suspend fun addImage(recipeId: Long, imported: ImportedImage): Long? = io {
-        val count = imageDao.countFor(recipeId)
-        if (count >= MAX_RECIPE_IMAGES) return@io null
-        val id = imageDao.insert(
-            RecipeImageEntity(
-                recipeId = recipeId,
-                path = imported.path,
-                thumbPath = imported.thumbPath,
-                width = imported.width,
-                height = imported.height,
-                sha256 = imported.sha256,
-                thumbSha256 = imported.thumbSha256,
-                sortOrder = count,
-                isCover = count == 0,
-            ),
-        )
-        recipeDao.touch(recipeId, System.currentTimeMillis())
-        id
+        // 数张数与插入必须在同一个事务里：两路并发导入各自看到 5 张，就会插成 7 张、两张封面
+        database.withTransaction {
+            val count = imageDao.countFor(recipeId)
+            if (count >= MAX_RECIPE_IMAGES) return@withTransaction null
+            val id = imageDao.insert(
+                RecipeImageEntity(
+                    recipeId = recipeId,
+                    path = imported.path,
+                    thumbPath = imported.thumbPath,
+                    width = imported.width,
+                    height = imported.height,
+                    sha256 = imported.sha256,
+                    thumbSha256 = imported.thumbSha256,
+                    sortOrder = count,
+                    isCover = count == 0,
+                ),
+            )
+            recipeDao.touch(recipeId, System.currentTimeMillis())
+            id
+        }
     }
 
     /** 删图：先删库里的行，再删磁盘上的两个文件。 */
@@ -324,19 +327,24 @@ class CookbookRepository(
 
     /** 换顺序：把 [from] 位置的图挪到 [to]。 */
     suspend fun moveImage(recipeId: Long, from: Int, to: Int) = io {
-        val ordered = imageDao.listFor(recipeId).toMutableList()
-        if (from !in ordered.indices || to !in ordered.indices || from == to) return@io
-        ordered.add(to, ordered.removeAt(from))
-        renumberImages(recipeId, ordered)
-        recipeDao.touch(recipeId, System.currentTimeMillis())
+        database.withTransaction {
+            val ordered = imageDao.listFor(recipeId).toMutableList()
+            if (from !in ordered.indices || to !in ordered.indices || from == to) return@withTransaction
+            ordered.add(to, ordered.removeAt(from))
+            renumberImages(recipeId, ordered)
+            recipeDao.touch(recipeId, System.currentTimeMillis())
+        }
     }
 
-    /** 设为列表封面（一张图独占）。 */
-    suspend fun setCover(recipeId: Long, imageId: Long) = io {
+    /** 设为列表封面（一张图独占）。图不属于这道菜就不动，返回 false。 */
+    suspend fun setCover(recipeId: Long, imageId: Long): Boolean = io {
         database.withTransaction {
+            // 不校验归属的话，传错 id 会把「本菜」的封面清掉、再给「别人」多盖一个封面
+            if (imageDao.listFor(recipeId).none { it.id == imageId }) return@withTransaction false
             imageDao.clearCover(recipeId)
             imageDao.markCover(imageId)
             recipeDao.touch(recipeId, System.currentTimeMillis())
+            true
         }
     }
 
@@ -381,11 +389,14 @@ class CookbookRepository(
      * 不会把 lastRev 顺手清零。
      */
     suspend fun deviceId(): String = io {
-        val current = syncStateDao.get()
-        current?.deviceId?.takeIf { it.isNotBlank() }?.let { return@io it }
-        val generated = newUuid()
-        syncStateDao.put((current ?: SyncStateEntity()).copy(deviceId = generated))
-        generated
+        // 读—判—写要走事务：并发时两边各生成一个 uuid，最后写的那次把前一次盖掉
+        database.withTransaction {
+            val current = syncStateDao.get()
+            current?.deviceId?.takeIf { it.isNotBlank() }?.let { return@withTransaction it }
+            val generated = newUuid()
+            syncStateDao.put((current ?: SyncStateEntity()).copy(deviceId = generated))
+            generated
+        }
     }
 
     /**
@@ -430,6 +441,14 @@ class CookbookRepository(
             tmp.deleteRecursively()
             throw e
         }
+        // 先验后写：同名分类会被 REPLACE 静默顶掉、重复 uuid 会撞唯一索引，
+        // 这两种都别让它们走到「库已经清空了才发现」那一步。
+        try {
+            validateBackup(backup)
+        } catch (e: Exception) {
+            tmp.deleteRecursively()
+            throw e
+        }
         try {
             database.withTransaction {
                 database.clearAllTables()
@@ -443,12 +462,43 @@ class CookbookRepository(
         tmp.deleteRecursively()
     }
 
-    private suspend fun buildBackup(): BackupFile {
+    /**
+     * 备份里的身份必须唯一：分类按名字唯一、按 uuid 唯一，食谱按 id 与 uuid 唯一。
+     *
+     * 不先验就写的话，撞名字的那一行会被 `REPLACE` 静默删掉，接着引用它的外键当场抛
+     * `SQLiteConstraintException` —— 用户只看到「导入失败」，看不出是备份本身有毛病。
+     */
+    private fun validateBackup(backup: BackupFile) {
+        val names = HashSet<String>()
+        val categoryUuids = HashSet<String>()
+        backup.categories.forEach { category ->
+            if (category.name.isBlank()) throw IllegalArgumentException("备份里有一个没名字的分类")
+            if (!names.add(category.name)) {
+                throw IllegalArgumentException("备份里有两个都叫「${category.name}」的分类")
+            }
+            if (category.uuid.isNotBlank() && !categoryUuids.add(category.uuid)) {
+                throw IllegalArgumentException("备份的「${category.name}」分类和其他分类身份重复")
+            }
+        }
+        val ids = HashSet<Long>()
+        val recipeUuids = HashSet<String>()
+        backup.recipes.forEach { recipe ->
+            if (!ids.add(recipe.id)) {
+                throw IllegalArgumentException("备份里有两道菜编号都是 ${recipe.id}")
+            }
+            if (recipe.uuid.isNotBlank() && !recipeUuids.add(recipe.uuid)) {
+                throw IllegalArgumentException("备份里的「${recipe.title}」和其他菜谱身份重复")
+            }
+        }
+    }
+
+    private suspend fun buildBackup(): BackupFile = database.withTransaction {
+        // 五张表分开查，中间要是插进一次编辑，导出的就是「有食谱没原料」的半截快照
         val ingredients = recipeDao.allIngredients().groupBy { it.recipeId }
         val blocks = recipeDao.allContentBlocks().groupBy { it.recipeId }
         val images = recipeDao.allRecipeImages().groupBy { it.recipeId }
         val links = recipeDao.allRecipeCategories().groupBy { it.recipeId }
-        return BackupFile.create(
+        BackupFile.create(
             exportedAt = System.currentTimeMillis(),
             categories = categoryDao.allCategories().map {
                 BackupCategory(id = it.id, name = it.name, sortOrder = it.sortOrder, uuid = it.uuid)
@@ -573,21 +623,32 @@ class CookbookRepository(
                     .asSequence()
                     .filter { safeStoredPath(it.file) && File(tmp, it.file).isFile }
                     .take(MAX_RECIPE_IMAGES)
-                    .map {
+                    .map { image ->
+                        val thumbPath = image.thumbFile.takeIf { thumb ->
+                            safeStoredPath(thumb) && File(tmp, thumb).isFile
+                        }.orEmpty()
                         RecipeImageEntity(
                             recipeId = recipe.id,
-                            path = it.file,
+                            path = image.file,
                             // 缩略图丢了就存空串，读的时候会回退到原图
-                            thumbPath = it.thumbFile.takeIf { thumb ->
-                                safeStoredPath(thumb) && File(tmp, thumb).isFile
-                            }.orEmpty(),
-                            width = it.width,
-                            height = it.height,
-                            // 旧备份里没有哈希（字段默认空串），同步前会惰性补算
-                            sha256 = it.sha256,
-                            thumbSha256 = it.thumbSha256,
-                            sortOrder = it.sortOrder,
-                            isCover = it.isCover,
+                            thumbPath = thumbPath,
+                            width = image.width,
+                            height = image.height,
+                            // 备份里写的哈希不轻信：以磁盘上的文件为准，对不上就重算
+                            sha256 = ImageStore.matchOrRecompute(
+                                File(tmp, image.file),
+                                image.sha256,
+                            ),
+                            thumbSha256 = if (thumbPath.isBlank()) {
+                                ""
+                            } else {
+                                ImageStore.matchOrRecompute(
+                                    File(tmp, thumbPath),
+                                    image.thumbSha256,
+                                )
+                            },
+                            sortOrder = image.sortOrder,
+                            isCover = image.isCover,
                         )
                     }
                     .toList()
@@ -616,24 +677,20 @@ class CookbookRepository(
     /**
      * 把临时目录里的 images/ 和 thumbs/ 换到正式位置。
      *
-     * 先把旧目录改名挪开、把新的 rename 进来，最后才删旧的。**不要**先
-     * `deleteRecursively()` 再 rename：rename 失败（磁盘满、目录被占用）时旧图已经没了、
-     * 新图还在临时目录里，紧接着调用方删掉临时目录，就只剩「库里有图、磁盘上没有」。
+     * 先试 rename（同一分区上是一次元数据操作，快）；rename 失败（目标被占用、跨分区）就
+     * **逐个拷进去**，而不是跳过——跳过会留下「库里有图、磁盘上没有」，而这正是最难受的一种
+     * 坏状态：界面上是空白图，还看不出为什么。拷不动就抛出去，让调用方把整件事判为失败。
+     *
+     * 合并式的拷贝意味着旧图里没被引用的那些会变成孤儿文件，不在这里删：内容寻址的文件可能
+     * 还被别的菜引用着，删错了就真丢了。同步收尾会清孤儿（见 `SyncEngine` 的 `cleanupOrphans`）。
      */
     private fun replaceImageDirs(tmp: File) {
         listOf(ImageStore.IMAGE_DIR, ImageStore.THUMB_DIR).forEach { name ->
-            val target = File(baseDir, name)
-            val stash = File(baseDir, "$name-old")
-            stash.deleteRecursively()
-            if (target.exists() && !target.renameTo(stash)) return@forEach
             val from = File(tmp, name)
-            if (!from.isDirectory) {
-                stash.deleteRecursively()
-            } else if (from.renameTo(target)) {
-                stash.deleteRecursively()
-            } else {
-                stash.renameTo(target) // 换不过去就把旧的放回来，至少保住原来那一份
-            }
+            if (!from.isDirectory) return@forEach
+            val target = File(baseDir, name)
+            if (!target.exists() && from.renameTo(target)) return@forEach
+            from.copyRecursively(target, overwrite = true)
         }
     }
 

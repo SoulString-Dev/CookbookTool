@@ -21,7 +21,6 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
@@ -30,6 +29,7 @@ import java.time.LocalDate
 import kotlinx.coroutines.launch
 import org.miu.cookbook.R
 import org.miu.cookbook.data.CookbookRepository
+import org.miu.cookbook.di.LocalAppContainer
 
 /**
  * 顶栏右侧的「⋮」：多选 / 导出 / 导入。
@@ -49,7 +49,9 @@ fun BackupMenu(
     modifier: Modifier = Modifier,
 ) {
     val context = LocalContext.current
-    val scope = rememberCoroutineScope()
+    // 整库导入导出可能要几十秒：挂在页面自己的 scope 上，用户一返回就被取消，
+    // 会停在「表清空了一半、图还没换过去」。所以挂在应用级的 appScope 上，跑完为止。
+    val appScope = LocalAppContainer.current.appScope
 
     var menuOpen by remember { mutableStateOf(false) }
     var pendingImport by remember { mutableStateOf<Uri?>(null) }
@@ -60,7 +62,7 @@ fun BackupMenu(
         ActivityResultContracts.CreateDocument("application/zip"),
     ) { uri ->
         if (uri == null) return@rememberLauncherForActivityResult
-        scope.launch {
+        appScope.launch {
             runCatching {
                 context.contentResolver.openOutputStream(uri)?.use { repository.exportBackup(it) }
                     ?: error(context.getString(R.string.backup_no_stream))
@@ -146,7 +148,7 @@ fun BackupMenu(
                     confirmImport = false
                     pendingImport = null
                     if (uri == null) return@TextButton
-                    scope.launch {
+                    appScope.launch {
                         runCatching {
                             context.contentResolver.openInputStream(uri)?.use {
                                 repository.importBackup(it)

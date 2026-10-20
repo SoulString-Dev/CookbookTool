@@ -89,6 +89,15 @@ object ImageStore {
     }
 
     /**
+     * 备份里声明的哈希只当线索：和磁盘上的文件对得上就沿用，对不上、或者压根没声明，
+     * 就按文件重算一遍（拿不到文件时给空串，同步前还会再补一次）。
+     */
+    fun matchOrRecompute(file: File, declared: String): String {
+        val actual = sha256Of(file) ?: return ""
+        return if (declared.isNotBlank() && declared == actual) declared else actual
+    }
+
+    /**
      * 算一个文件的 sha256（流式读，别把几十兆的图整个塞进内存）。
      *
      * 同步靠它做内容寻址：同一张图被两道菜引用、或者两台设备各拍了一张一样的图，

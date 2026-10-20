@@ -15,6 +15,7 @@ import org.junit.Assert.assertTrue
 import org.junit.Assert.fail
 import org.junit.Before
 import org.junit.Test
+import org.miu.cookbook.domain.backup.BackupCodec
 import org.miu.cookbook.domain.backup.BackupFile
 import org.miu.cookbook.domain.backup.BackupImage
 import org.miu.cookbook.domain.backup.BackupRecipe
@@ -103,6 +104,48 @@ class BackupArchiveTest {
 
         assertEquals(listOf("cookbook.json"), entryNames(bytes))
         assertEquals(1, BackupArchive.read(ByteArrayInputStream(bytes), dst).recipes.size)
+    }
+
+    @Test
+    fun `两道菜用同一张图时，zip 里不会出现重复条目`() {
+        writeImage(src, "images/a.jpg", byteArrayOf(1, 2, 3, 4))
+        val image = BackupImage("images/a.jpg")
+        val backup = BackupFile.create(
+            recipes = listOf(
+                BackupRecipe(id = 1, title = "甲", images = listOf(image)),
+                BackupRecipe(id = 2, title = "乙", images = listOf(image.copy())),
+            ),
+        )
+
+        val bytes = ByteArrayOutputStream()
+            .also { BackupArchive.write(backup, src, it) }
+            .toByteArray()
+
+        assertEquals(listOf("cookbook.json", "images/a.jpg"), entryNames(bytes))
+    }
+
+    @Test
+    fun `解压大得离谱的图片会被拦下来，而不是写满磁盘`() {
+        val bytes = ByteArrayOutputStream()
+            .also { out ->
+                ZipOutputStream(out).use { zip ->
+                    zip.putNextEntry(ZipEntry("cookbook.json"))
+                    zip.write(BackupCodec.encode(BackupFile.create()).toByteArray())
+                    zip.closeEntry()
+                    zip.putNextEntry(ZipEntry("images/bomb.jpg"))
+                    val chunk = ByteArray(64 * 1024)
+                    repeat(33 * 16) { zip.write(chunk) } // 33 MB 的零，压缩后很小
+                    zip.closeEntry()
+                }
+            }
+            .toByteArray()
+
+        try {
+            BackupArchive.read(ByteArrayInputStream(bytes), dst)
+            fail("应该抛异常")
+        } catch (e: IllegalArgumentException) {
+            assertTrue(e.message.orEmpty().contains("太大"))
+        }
     }
 
     @Test
