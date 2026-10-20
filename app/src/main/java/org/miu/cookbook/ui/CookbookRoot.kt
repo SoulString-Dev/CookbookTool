@@ -5,6 +5,7 @@ import androidx.compose.animation.Crossfade
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.List
@@ -14,6 +15,7 @@ import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.DrawerValue
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.HorizontalDivider
@@ -42,9 +44,12 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.navigation.NavBackStackEntry
 import androidx.navigation.NavGraph.Companion.findStartDestination
 import androidx.navigation.NavType
@@ -56,8 +61,12 @@ import androidx.navigation.navArgument
 import kotlinx.coroutines.launch
 import org.miu.cookbook.R
 import org.miu.cookbook.data.db.ContentSection
+import org.miu.cookbook.data.sync.SyncStatus
 import org.miu.cookbook.di.LocalAppContainer
 import org.miu.cookbook.ui.backup.BackupMenu
+import org.miu.cookbook.ui.categories.CategoryEditScreen
+import org.miu.cookbook.ui.sidebar.RailCategory
+import org.miu.cookbook.ui.sidebar.SidebarPrefs
 import org.miu.cookbook.ui.components.LocalMessenger
 import org.miu.cookbook.ui.components.rememberMessenger
 import org.miu.cookbook.ui.history.MealHistoryScreen
@@ -94,6 +103,9 @@ private const val ROUTE_IMAGE_EDIT = "recipe/{recipeId}/images"
 /** 设置（现在只有家庭共享这一节）。它不是主界面，所以不进 [MainDestination]。 */
 private const val ROUTE_SETTINGS = "settings"
 
+/** 编辑分类：管侧栏里放哪些分类、按什么顺序。 */
+private const val ROUTE_CATEGORY_EDIT = "categories"
+
 /** 做法 / 备注的文本编辑。 */
 private const val ROUTE_CONTENT_EDIT = "recipe/{recipeId}/text/{section}"
 private const val ARG_CONTENT_SECTION = "section"
@@ -122,6 +134,45 @@ fun CookbookRoot(
     // 提示走应用自己的 Snackbar，颜色跟着主题（系统 Toast 切不动日夜模式）
     val snackbarHostState = remember { SnackbarHostState() }
     val messenger = rememberMessenger(snackbarHostState)
+
+    val appContext = LocalContext.current
+
+    // 分类侧栏：显示哪些、什么顺序、当前选中哪个，全是这台机器自己的看法，存 SharedPreferences。
+    // 用 uuid 而不是本机 id，导入备份换库以后也对得上。
+    val sidebarPrefs = remember { SidebarPrefs(appContext) }
+    var sidebarEnabled by remember { mutableStateOf(sidebarPrefs.enabled) }
+    var sidebarCategoryUuids by remember { mutableStateOf(sidebarPrefs.categoryUuids) }
+    var railSelectedUuid by remember { mutableStateOf(sidebarPrefs.selectedUuid) }
+    val allCategories by container.repository.categories.collectAsStateWithLifecycle(initialValue = emptyList())
+    val railCategories = remember(sidebarCategoryUuids, allCategories) {
+        val byUuid = allCategories.associateBy { it.uuid }
+        sidebarCategoryUuids.mapNotNull { uuid -> byUuid[uuid]?.let { RailCategory(it.uuid, it.name) } }
+    }
+    val syncStatus by container.syncEngine.status.collectAsStateWithLifecycle()
+
+    // 分类被从侧栏移出（或不存在了）时，别让高亮停在一个看不见的项上
+    LaunchedEffect(sidebarCategoryUuids) {
+        if (railSelectedUuid.isNotEmpty() && railSelectedUuid !in sidebarCategoryUuids) {
+            railSelectedUuid = ""
+            sidebarPrefs.selectedUuid = ""
+        }
+    }
+
+    // 同步完了把侧栏里已经不存在的分类剪掉（分类万一被删了，别留一条点不进去的空壳）
+    LaunchedEffect(syncStatus) {
+        if (syncStatus is SyncStatus.Done) {
+            val alive = container.repository.categoryUuids()
+            val kept = sidebarCategoryUuids.filter { it in alive }
+            if (kept != sidebarCategoryUuids) {
+                sidebarCategoryUuids = kept
+                sidebarPrefs.categoryUuids = kept
+            }
+            if (railSelectedUuid.isNotEmpty() && railSelectedUuid !in alive) {
+                railSelectedUuid = ""
+                sidebarPrefs.selectedUuid = ""
+            }
+        }
+    }
 
     val backStackEntry by navController.currentBackStackEntryAsState()
     val route = backStackEntry?.destination?.route
@@ -174,6 +225,7 @@ fun CookbookRoot(
         route == ROUTE_INGREDIENT_EDIT -> stringResource(R.string.section_ingredients)
         route == ROUTE_IMAGE_EDIT -> stringResource(R.string.image_edit_title)
         route == ROUTE_SETTINGS -> stringResource(R.string.settings_title)
+        route == ROUTE_CATEGORY_EDIT -> stringResource(R.string.category_edit_title)
         route == ROUTE_CONTENT_EDIT -> when (sectionName) {
             ContentSection.NOTE.name -> stringResource(R.string.section_notes)
             else -> stringResource(R.string.section_directions)
@@ -278,11 +330,69 @@ fun CookbookRoot(
                     },
                     actions = {
                         when {
-                            mainDestination != null -> BackupMenu(
-                                repository = container.repository,
-                                onMessage = { message -> messenger.show(message) },
-                                onStartSelection = { selectionRequested = true },
-                            )
+                            mainDestination != null -> {
+                                // 同步按钮只放食谱页：历史页的饮食记录本来就不同步，
+                                // 在那儿摆一个同步按钮只会让人以为它也会跟着走
+                                if (route == MainDestination.Recipes.route) {
+                                    IconButton(
+                                        enabled = syncStatus !is SyncStatus.Running,
+                                        onClick = {
+                                            scope.launch {
+                                                if (!container.syncEngine.paired) {
+                                                    messenger.show(appContext.getString(R.string.sync_not_paired))
+                                                    return@launch
+                                                }
+                                                container.syncEngine.syncNow().fold(
+                                                    onSuccess = { report ->
+                                                        messenger.show(
+                                                            if (report.conflicts > 0) {
+                                                                appContext.getString(
+                                                                    R.string.sync_done_with_conflicts,
+                                                                    report.pulled,
+                                                                    report.pushed,
+                                                                    report.conflicts,
+                                                                )
+                                                            } else {
+                                                                appContext.getString(
+                                                                    R.string.sync_done_message,
+                                                                    report.pulled,
+                                                                    report.pushed,
+                                                                )
+                                                            },
+                                                        )
+                                                    },
+                                                    onFailure = { error ->
+                                                        messenger.show(
+                                                            appContext.getString(
+                                                                R.string.settings_sync_failed,
+                                                                error.message
+                                                                    ?: appContext.getString(R.string.settings_unknown_reason),
+                                                            ),
+                                                        )
+                                                    },
+                                                )
+                                            }
+                                        },
+                                    ) {
+                                        if (syncStatus is SyncStatus.Running) {
+                                            CircularProgressIndicator(
+                                                modifier = Modifier.size(18.dp),
+                                                strokeWidth = 2.dp,
+                                            )
+                                        } else {
+                                            Icon(
+                                                painter = painterResource(R.drawable.ic_sync),
+                                                contentDescription = stringResource(R.string.sync_now_action),
+                                            )
+                                        }
+                                    }
+                                }
+                                BackupMenu(
+                                    repository = container.repository,
+                                    onMessage = { message -> messenger.show(message) },
+                                    onStartSelection = { selectionRequested = true },
+                                )
+                            }
 
                             // 只读时才有 Markdown 和铅笔；编辑态是即时落盘的，顶栏不留按钮
                             route == ROUTE_RECIPE_DETAIL -> if (!detailState.editing &&
@@ -335,12 +445,38 @@ fun CookbookRoot(
                         onRecordingChanged = { recordingActive = it },
                         selectionRequested = selectionRequested,
                         onSelectionRequestedHandled = { selectionRequested = false },
+                        railEnabled = sidebarEnabled,
+                        railCategories = railCategories,
+                        railSelectedUuid = railSelectedUuid,
+                        onRailSelect = { uuid ->
+                            // 单选，且只有「全部」能清掉；再点一次已选中的分类不动
+                            if (uuid.isEmpty() || uuid != railSelectedUuid) {
+                                railSelectedUuid = uuid
+                                sidebarPrefs.selectedUuid = uuid
+                            }
+                        },
+                        onEditCategories = { navController.navigate(ROUTE_CATEGORY_EDIT) },
+                    )
+                }
+                composable(ROUTE_CATEGORY_EDIT) {
+                    CategoryEditScreen(
+                        allCategories = allCategories.map { RailCategory(it.uuid, it.name) },
+                        selectedUuids = sidebarCategoryUuids,
+                        onChange = { next ->
+                            sidebarCategoryUuids = next
+                            sidebarPrefs.categoryUuids = next
+                        },
                     )
                 }
                 composable(ROUTE_SETTINGS) {
                     SyncSettingsScreen(
                         themeMode = themeMode,
                         onThemeModeChange = onThemeModeChange,
+                        sidebarEnabled = sidebarEnabled,
+                        onSidebarEnabledChange = { on ->
+                            sidebarEnabled = on
+                            sidebarPrefs.enabled = on
+                        },
                     )
                 }
                 composable(MainDestination.History.route) {

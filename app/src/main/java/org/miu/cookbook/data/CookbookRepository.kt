@@ -76,6 +76,9 @@ class CookbookRepository(
 
     fun recipeDetail(id: Long): Flow<RecipeDetail?> = recipeDao.observeDetail(id)
 
+    /** 库里所有分类的 uuid（侧栏拿它剪掉已经没了的分类）。 */
+    suspend fun categoryUuids(): Set<String> = io { categoryDao.allCategories().mapTo(HashSet()) { it.uuid } }
+
     suspend fun linkedCategoryIds(recipeId: Long): Set<Long> =
         io { categoryDao.linkedCategoryIds(recipeId).toSet() }
 

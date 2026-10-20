@@ -203,4 +203,24 @@
     <!-- 冲突副本提示 -->
     <string name="conflict_banner_title">有 %1$d 道菜两边都改过</string>
     <string name="conflict_banner_hint">各留了一份副本，名字后面带「（冲突副本）」。挑一份想要的，另一份删掉即可。</string>
+    <!-- 分类侧栏 -->
+    <string name="rail_all">全部</string>
+    <string name="category_edit_title">编辑分类</string>
+    <string name="category_edit_all_title">所有分类</string>
+    <string name="category_edit_all_hint">勾上的会出现在食谱页左边的分类栏里。</string>
+    <string name="category_edit_selected_title">侧栏里的分类</string>
+    <string name="category_edit_selected_hint">长按拖动调整顺序；点右边的 × 从侧栏移出（分类本身还在）。</string>
+    <string name="category_edit_empty">还没有分类。给菜谱加分类以后，这里就会出现。</string>
+    <string name="category_edit_selected_empty">还没选任何分类，勾选上面的分类加进来。</string>
+    <string name="category_edit_remove">从侧栏移出</string>
+    <string name="category_edit_drag">拖动调整顺序</string>
+    <string name="settings_sidebar_section">食谱页</string>
+    <string name="settings_sidebar_label">左边的分类栏</string>
+    <string name="settings_sidebar_hint">关掉以后食谱页不再显示这一条；分类本身不受影响。</string>
+
+    <!-- 顶栏的同步按钮 -->
+    <string name="sync_now_action">同步</string>
+    <string name="sync_not_paired">还没配对，先去设置里的「家庭共享」配对</string>
+    <string name="sync_done_message">同步完成：收到 %1$d 道菜，发出 %2$d 道</string>
+    <string name="sync_done_with_conflicts">同步完成：收到 %1$d 道菜，发出 %2$d 道；有 %3$d 道两边都改过，各留了一份副本</string>
 </resources>

@@ -17,6 +17,8 @@ data class RecipeListItem(
     val id: Long,
     val title: String,
     val categories: List<String>,
+    /** 分类的跨设备身份：侧栏按它把这道菜挑出来置顶（名字是给人看的，会变）。 */
+    val categoryUuids: List<String>,
     val ingredients: List<IngredientLine>,
     /** 列表封面的绝对路径；没有图片时为 null，界面留占位。 */
     val coverPath: String?,
@@ -35,6 +37,17 @@ data class RecipeListItem(
         const val MAX_SUMMARY_INGREDIENTS = 4
     }
 }
+
+/**
+ * 侧栏选中某个分类后的排序：**不过滤**，只是把带这个分类的排到前面，
+ * 两段各自保持传进来的次序（也就是「全部」原来的时间顺序）。
+ */
+fun List<RecipeListItem>.boostCategory(uuid: String): List<RecipeListItem> =
+    if (uuid.isEmpty()) {
+        this
+    } else {
+        partition { uuid in it.categoryUuids }.let { (hit, rest) -> hit + rest }
+    }
 
 /** 详情页渲染用。 */
 data class RecipeDetailUi(
@@ -58,6 +71,7 @@ fun RecipeListRow.toListItem(baseDir: File): RecipeListItem {
         id = recipe.id,
         title = recipe.title,
         categories = categoryNames,
+        categoryUuids = categories.map { it.uuid },
         ingredients = ingredientLines,
         coverPath = images.coverPath(baseDir),
         searchDocument = FuzzySearch.Document(

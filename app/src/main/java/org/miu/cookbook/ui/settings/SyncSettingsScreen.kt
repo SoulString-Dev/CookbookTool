@@ -21,6 +21,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.RadioButton
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -63,7 +64,12 @@ import java.time.format.DateTimeFormatter
  * 所以这里不能给「记住我」之类的暗示——换个服务端就得重新配对。
  */
 @Composable
-fun SyncSettingsScreen(themeMode: ThemeMode, onThemeModeChange: (ThemeMode) -> Unit) {
+fun SyncSettingsScreen(
+    themeMode: ThemeMode,
+    onThemeModeChange: (ThemeMode) -> Unit,
+    sidebarEnabled: Boolean,
+    onSidebarEnabledChange: (Boolean) -> Unit,
+) {
     val container = LocalAppContainer.current
     val messenger = LocalMessenger.current
     val scope = rememberCoroutineScope()
@@ -151,6 +157,30 @@ fun SyncSettingsScreen(themeMode: ThemeMode, onThemeModeChange: (ThemeMode) -> U
                 Spacer(Modifier.width(8.dp))
                 Text(stringResource(mode.labelRes), style = MaterialTheme.typography.bodyLarge)
             }
+        }
+        Spacer(Modifier.height(8.dp))
+
+        // 食谱页左侧的分类栏：只影响这一台设备的界面，跟同步无关
+        SectionTitle(stringResource(R.string.settings_sidebar_section))
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier
+                .fillMaxWidth()
+                .clickable { onSidebarEnabledChange(!sidebarEnabled) }
+                .padding(vertical = 4.dp),
+        ) {
+            Column(Modifier.weight(1f)) {
+                Text(
+                    text = stringResource(R.string.settings_sidebar_label),
+                    style = MaterialTheme.typography.bodyLarge,
+                )
+                Text(
+                    text = stringResource(R.string.settings_sidebar_hint),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            Switch(checked = sidebarEnabled, onCheckedChange = onSidebarEnabledChange)
         }
         Spacer(Modifier.height(8.dp))
 
