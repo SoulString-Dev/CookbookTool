@@ -123,8 +123,10 @@ class CookbookRepository(
             recipeDao.softDeleteByIds(ids, now)
             found
         }
-        // 文件删除放在事务外：删磁盘不该占着数据库事务（图片行已经在事务里没了）
-        images.forEach { ImageStore.deleteFiles(baseDir, it.path, it.thumbPath) }
+        // 文件删除放在事务外：删磁盘不该占着数据库事务（图片行已经在事务里没了）。
+        // 而且**要确认没有别的行还在引用同一个文件**：同步落地的图按内容寻址
+        // （`images/<sha256>.jpg`），两张菜用同一张图时只有一个文件。
+        images.forEach { deleteFilesIfUnreferenced(it.path, it.thumbPath) }
     }
 
     /** 这些食谱下共有多少条饮食记录，用于删除前的提示。 */
@@ -301,7 +303,23 @@ class CookbookRepository(
             renumberImages(image.recipeId, imageDao.listFor(image.recipeId))
             recipeDao.touch(image.recipeId, System.currentTimeMillis())
         }
-        ImageStore.deleteFiles(baseDir, image.path, image.thumbPath)
+        deleteFilesIfUnreferenced(image.path, image.thumbPath)
+    }
+
+    /**
+     * 删图的两个文件，但**先问一句还有没有别的行在用它**。
+     *
+     * 同步落地的图按内容寻址存（`images/<sha256>.jpg`）：两道菜用同一张图时，磁盘上只有
+     * 一份文件。直接删会把另一道菜的图也删掉——它的行还在，于是变成裂图，而且这个哈希
+     * 再也传不上去。所以先按路径查一遍引用数，最后一份才删。
+     */
+    private suspend fun deleteFilesIfUnreferenced(path: String, thumbPath: String) {
+        if (path.isNotBlank() && imageDao.countByPath(path) == 0) {
+            ImageStore.deleteFiles(baseDir, path, "")
+        }
+        if (thumbPath.isNotBlank() && thumbPath != path && imageDao.countByPath(thumbPath) == 0) {
+            ImageStore.deleteFiles(baseDir, thumbPath, "")
+        }
     }
 
     /** 换顺序：把 [from] 位置的图挪到 [to]。 */

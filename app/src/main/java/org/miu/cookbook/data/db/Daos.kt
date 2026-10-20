@@ -393,6 +393,19 @@ interface RecipeImageDao {
     /** 还没算哈希的行（每次同步前扫一遍，量级是几百行，够用）。 */
     @Query("SELECT * FROM recipe_image WHERE sha256 = '' OR thumb_sha256 = ''")
     suspend fun allMissingHashes(): List<RecipeImageEntity>
+
+    /**
+     * 还有几行在引用这个路径（原图列和缩略图列都算）。
+     *
+     * 同步落地的图是**按内容寻址**的（`images/<sha256>.jpg`），同一张图被两道菜引用时
+     * 只有一份文件。删一张图之前必须问这一句，否则会把别人的图删掉。
+     */
+    @Query("SELECT COUNT(*) FROM recipe_image WHERE path = :path OR thumb_path = :path")
+    suspend fun countByPath(path: String): Int
+
+    /** 库里还引用着的所有文件路径（原图 + 缩略图），用来扫盘回收孤儿文件。 */
+    @Query("SELECT path FROM recipe_image UNION SELECT thumb_path FROM recipe_image")
+    suspend fun allPaths(): List<String>
 }
 
 @Dao

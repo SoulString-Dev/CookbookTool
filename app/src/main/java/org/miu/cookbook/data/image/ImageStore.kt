@@ -6,6 +6,8 @@ import android.graphics.BitmapFactory
 import android.graphics.Matrix
 import android.net.Uri
 import androidx.exifinterface.media.ExifInterface
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import java.io.File
 import java.io.FileOutputStream
 import java.io.InputStream
@@ -63,13 +65,20 @@ object ImageStore {
             (height * scale).roundToInt().coerceAtLeast(1)
     }
 
-    suspend fun importFromUri(context: Context, uri: Uri, baseDir: File): ImportedImage? {
-        val resolver = context.contentResolver
-        return save({ resolver.openInputStream(uri) }, baseDir)
-    }
+    /**
+     * 导入一张图。**在 IO 线程上做**：一次导入要读三遍流（量尺寸、解码、读 EXIF）、
+     * 两轮缩放、两次 JPEG 编码和两次 SHA-256，大图在界面上跑就是卡顿甚至 ANR。
+     * 调用方直接 `launch { importFromUri(...) }` 就行，不用自己再切线程。
+     */
+    suspend fun importFromUri(context: Context, uri: Uri, baseDir: File): ImportedImage? =
+        withContext(Dispatchers.IO) {
+            val resolver = context.contentResolver
+            save({ resolver.openInputStream(uri) }, baseDir)
+        }
 
+    /** 同 [importFromUri]，文件来源（拍照临时文件）。 */
     suspend fun importFromFile(file: File, baseDir: File): ImportedImage? =
-        save({ file.inputStream() }, baseDir)
+        withContext(Dispatchers.IO) { save({ file.inputStream() }, baseDir) }
 
     /** 删掉一张图片的两个文件（库里那一行由仓库负责删）。 */
     fun deleteFiles(baseDir: File, path: String, thumbPath: String) {

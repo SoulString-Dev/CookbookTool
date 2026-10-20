@@ -170,6 +170,36 @@ class SyncEngineTest {
     }
 
     @Test
+    fun `家人删了我还在改的菜，我的改动会被复活而不是丢掉`() = runBlocking {
+        val a = newDevice("a")
+        val b = newDevice("b")
+
+        val recipeId = a.repo.createRecipe("红烧肉")
+        a.pairAndSync(base)
+        b.pairAndSync(base)
+        val bId = b.repo.recipeList.first().single().recipe.id
+
+        // 甲那边删掉并同步
+        a.repo.deleteRecipes(listOf(recipeId))
+        a.pairAndSync(base)
+
+        // 乙这边离线改过（时间比墓碑新），再同步：应该推上去并被服务端复活
+        Thread.sleep(10)
+        b.repo.renameRecipe(bId, "红烧肉（我家版）")
+        b.pairAndSync(base)
+
+        assertEquals("红烧肉（我家版）", b.repo.recipeList.first().single().recipe.title)
+
+        // 再同步一轮，不能被那条旧墓碑吃掉（水位前进、旧墓碑只忽略不生效）
+        b.pairAndSync(base)
+        assertEquals("红烧肉（我家版）", b.repo.recipeList.first().single().recipe.title)
+
+        // 甲那边拉回来也该是活的
+        a.pairAndSync(base)
+        assertEquals("红烧肉（我家版）", a.repo.recipeList.first().single().recipe.title)
+    }
+
+    @Test
     fun `A 删掉的菜在 B 变成墓碑，但 B 那天吃过的记录还在`() = runBlocking {
         val a = newDevice("a")
         val b = newDevice("b")

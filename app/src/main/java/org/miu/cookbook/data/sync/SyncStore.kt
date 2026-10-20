@@ -178,8 +178,24 @@ class SyncStore(
         val local = recipeDao.findByUuid(record.uuid)
 
         if (record.deleted) {
-            // 本机没有这道菜（或已经是墓碑）：没有东西要删，记个水位就走
-            if (local == null || local.deletedAt != 0L) return true
+            if (local == null) return true
+            if (local.deletedAt != 0L) {
+                // 本机已经是墓碑：这条要么是「我刚推上去的那个删除」，要么是更旧的重复墓碑。
+                // 时间戳对得上才清脏——否则本地还欠着一次**更新的**删除，不能丢。
+                // 不清脏的话，家人以后把这道菜复活时，本机会把它当成「本地有未推送的改动」永远跳过。
+                if (local.updatedAt == record.updatedAt) {
+                    recipeDao.clearDirtyIfUnchanged(local.uuid, local.updatedAt, record.rev)
+                }
+                return true
+            }
+
+            // 本机这一版比墓碑新：**不能删**。两种来路，处理不一样：
+            // - 还脏（改动没推上去）：跳过并把水位卡住，等推送时让服务端按「较新者胜」复活它；
+            //   直接打墓碑的话，用户离线时改的东西就静默没了。
+            // - 不脏（已经推成功过，这条旧墓碑只是又被拉了一遍）：忽略它，继续前进——
+            //   否则水位会永远卡在这条旧记录上，每轮同步原地打转。
+            if (local.updatedAt > record.updatedAt) return !local.dirty
+
             val at = if (record.updatedAt > 0) record.updatedAt else System.currentTimeMillis()
             recipeDao.applyRemoteTombstone(local.id, at)
             return true
@@ -349,5 +365,42 @@ class SyncStore(
         val file = File(dir, "$sha256.jpg")
         if (!file.isFile || file.length() != bytes.size.toLong()) file.writeBytes(bytes)
         return "$dirName/$sha256.jpg"
+    }
+
+    /**
+     * 每次同步成功后收一遍尾：清过期墓碑 + 回收没人引用的图片文件。
+     *
+     * 为什么不清干净：墓碑是「这道菜被删了」这条消息本身，清早了会让还没同步到的设备
+     * 把它当成新记录又拉回来。所以留 [TOMBSTONE_RETENTION_MS]（一年）。
+     * **代价**要记住：墓碑一删，它下面的饮食记录会被外键级联带走——一年前吃过什么，
+     * 满一年后就不在历史里了。这是拿「库不无限膨胀」换的，README 里写着。
+     *
+     * 回收孤儿图时留 [ORPHAN_GRACE_MS] 的宽限：刚导入还没写行的文件（或者正好在
+     * 一次导入的中途）不能被当成垃圾删掉。
+     *
+     * @return 删掉的墓碑行数 to 删掉的图片文件数
+     */
+    suspend fun cleanupOrphans(now: Long = System.currentTimeMillis()): Pair<Int, Int> {
+        val purged = recipeDao.purgeTombstones(now - TOMBSTONE_RETENTION_MS)
+        val referenced = imageDao.allPaths().filter { it.isNotEmpty() }.toSet()
+
+        var removed = 0
+        listOf(ImageStore.IMAGE_DIR, ImageStore.THUMB_DIR).forEach { dirName ->
+            File(baseDir, dirName).listFiles()?.forEach { file ->
+                if (!file.isFile) return@forEach
+                if (now - file.lastModified() < ORPHAN_GRACE_MS) return@forEach
+                if ("$dirName/${file.name}" in referenced) return@forEach
+                if (file.delete()) removed += 1
+            }
+        }
+        return purged to removed
+    }
+
+    companion object {
+        /** 墓碑留一年。再久就是「库无限膨胀」和「历史被级联带走」之间的取舍。 */
+        const val TOMBSTONE_RETENTION_MS = 365L * 24 * 60 * 60 * 1000
+
+        /** 孤儿图至少放一天：给「文件已写、行还没写」的中间态留余地。 */
+        const val ORPHAN_GRACE_MS = 24L * 60 * 60 * 1000
     }
 }

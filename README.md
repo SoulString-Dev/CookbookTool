@@ -343,10 +343,10 @@ docker compose exec cookbook-sync \
 
 - **真机验证过一轮**（Android 8.0+ 装得上、侧边栏能点、模糊搜索与 SAF 跳转正常）。
   这台开发机没有 `/dev/kvm`，起不了模拟器，所以剩下的触摸细节、系统相机、Photo Picker
-  还是只能装到手机上试。141 个 JVM 单测覆盖了领域逻辑、Room 读写、备份 zip、同步引擎和主要界面
+  还是只能装到手机上试。150 个 JVM 单测覆盖了领域逻辑、Room 读写、备份 zip、同步引擎和主要界面
   （Robolectric 里跑 Compose），其中 8 个是数据库迁移测试（v1→v2→v3：自己造一个老版本的库
   再让 Room 升上来，数据没丢、且迁移出的表结构 Room 认），12 个是同步引擎的端到端测试
-  （**进程内起一个真服务端**，用两套独立的库假装两台手机）；另有 24 个服务端测试
+  （**进程内起一个真服务端**，用两套独立的库假装两台手机）；另有 26 个服务端测试
   （`bash scripts/build.sh :sync-server:test`，真起进程内 HTTP 服务）。**侧边栏条目的点击在 Robolectric 里不正常**（触摸会被抽屉
   蒙版吃掉，怀疑是测试环境的问题），这个在真机上确认是好的。
 - **lint 目前 0 error、41 warning**，剩三类都是预期内的：`GradleDependency` / `AndroidGradlePluginVersion`

@@ -1,6 +1,7 @@
 package org.miu.cookbook.data.sync
 
 import android.os.NetworkOnMainThreadException
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -156,7 +157,18 @@ class SyncEngine(
      * 失败不抛给界面，包在 [Result] 里：调用方要的是一句能显示的话，不是一个崩溃。
      */
     suspend fun syncNow(): Result<SyncReport> = mutex.withLock {
-        withContext(Dispatchers.IO) { syncUnlocked() }
+        withContext(Dispatchers.IO) {
+            try {
+                syncUnlocked()
+            } catch (error: CancellationException) {
+                throw error
+            } catch (error: Throwable) {
+                // 兜底：`require` 失败、服务端回了 200 却不是 JSON、Room 抛 SQLiteException……
+                // 这些都不该冲出 Result 契约（状态会永远停在 Running，后台 worker 里还会崩），
+                // 更不该让界面看到一句「未知原因」。
+                fail(error)
+            }
+        }
     }
 
     /**
@@ -295,6 +307,11 @@ class SyncEngine(
                 lastError = "",
             ),
         )
+
+        // 收尾：清过期墓碑、回收没人引用的图片文件。失败不影响这一轮的账
+        // （清理是维护动作，不该让一次成功的同步变成失败）。
+        runCatching { store.cleanupOrphans() }
+
         return SyncReport(pulled = pulled, pushed = pushed, conflicts = conflicts, lastRev = since)
     }
 
@@ -325,6 +342,7 @@ class SyncEngine(
             downloadBlobs(api, page.recipes)
             val skipped = store.applyPull(page.recipes)
 
+            val before = since
             since = if (skipped.isEmpty()) {
                 // 防御服务端回一个比 since 还小的 nextSince（那样会原地打转）
                 maxOf(since, page.nextSince)
@@ -336,6 +354,10 @@ class SyncEngine(
 
             pages += 1
             if (!page.hasMore) break
+            // 页首那条被跳过时水位原地不动（`earliest - 1 == since`）：再拉还是同一页、
+            // 再落地一遍同样的记录，直到撞上 MAX_PULL_PAGES 白跑 500 轮。
+            // 这时的正确做法是**现在就去推**，把这条推完再看下一页。
+            if (since <= before) break
         }
         return since to pulled
     }
