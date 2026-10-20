@@ -49,8 +49,13 @@ object RecipeMarkdown {
     private val DIRECTIONS_HEADERS = setOf("做法", "步骤", "制作", "作法")
     private val NOTES_HEADERS = setOf("备注", "小贴士", "提示", "注意")
 
-    /** 列表项：可选的缩进 + 序号（1. / 1、/ 1)）+ 内容。 */
-    private val LIST_ITEM = Regex("""^(\s*)\d+\s*[.、)]\s*(.*)$""")
+    /**
+     * 列表项：可选的缩进 + 序号（1. / 1、/ 1)）+ 内容。
+     *
+     * 句点后面**紧跟数字**的不算序号：否则「1.5 升水」会被当成第 1 项「5 升水」，
+     * 一份写着用量的食谱导进来就乱了（顿号与右括号没有这个歧义）。
+     */
+    private val LIST_ITEM = Regex("""^(\s*)\d+\s*(?:[、)]|\.(?!\d))\s*(.*)$""")
 
     // ---------- 写 ----------
 
@@ -144,10 +149,16 @@ object RecipeMarkdown {
                         categories += tags
                         return@forEach
                     }
-                    val item = LIST_ITEM.matchEntire(line) ?: return@forEach
-                    val indent = item.groupValues[1].replace("\t", "  ").length
-                    val level = (indent / 2).coerceIn(0, ContentOutline.MAX_LEVEL)
-                    val text = item.groupValues[2].trim()
+                    val item = LIST_ITEM.matchEntire(line)
+                    val (level, text) = if (item != null) {
+                        val indent = item.groupValues[1].replace("\t", "  ").length
+                        (indent / 2).coerceIn(0, ContentOutline.MAX_LEVEL) to item.groupValues[2].trim()
+                    } else {
+                        // 章节里没编号的裸行（比如「1.5 升就够」这种手写的补充说明）
+                        // 也收进来当一行正文：宁可多一行，也别在导入时把它悄悄丢掉
+                        0 to line.trim()
+                    }
+                    if (text.isEmpty()) return@forEach
                     when (section) {
                         SECTION_INGREDIENTS -> ingredients += parseIngredient(text)
                         SECTION_DIRECTIONS -> directions += ContentLine(text, level = level)

@@ -173,7 +173,7 @@ class CookbookRepositoryTest {
     @Test
     fun `列表按最近添加倒序`() {
         val first = runBlocking { repository.createRecipe("第一道") }
-        Thread.sleep(5)
+        // 不 sleep：同一毫秒建的两道菜靠 created_at DESC, id DESC 兜底，本来就分得开
         val second = runBlocking { repository.createRecipe("第二道") }
 
         assertNotEquals(first, second)

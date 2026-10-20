@@ -162,7 +162,7 @@ class MigrationTest {
     fun `唯一索引真的拦得住重复 uuid`() {
         val db = migrate(seedV1Data())
         val existing = runBlocking {
-            val first = db.recipeDao().observeAll().first().first()
+            val first = db.recipeDao().observeAllWithDetails().first().first().recipe
             db.recipeDao().findByUuid(first.uuid)
         }!!
 

@@ -16,6 +16,7 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
@@ -334,6 +335,17 @@ class SyncEngineTest {
     }
 
     @Test
+    fun `配对失败不会留下半套凭据`() = runBlocking {
+        val device = newDevice("half")
+
+        val result = device.engine.pair(base, "", "000000", "测试机")
+
+        assertTrue(result.isFailure)
+        assertFalse("失败了就不该算配对成功", device.credentials.paired)
+        assertEquals("地址也不该写进去", "", device.credentials.primaryUrl)
+    }
+
+    @Test
     fun `配对码不对就配不上`() = runBlocking {
         val a = newDevice("a")
         val result = a.engine.pair(base, "", "000000", "厨房的手机")
@@ -416,6 +428,43 @@ class SyncEngineTest {
         val dir: File,
         val scope: CoroutineScope,
     )
+
+    @Test
+    fun `拉取时跳过本地还没推的改动，并把这一条报回去用来卡水位`() = runBlocking {
+        val a = newDevice("a")
+        val recipeId = a.repo.createRecipe("红烧肉")
+        a.pairAndSync(base)
+        val uuid = a.repo.recipeList.first().single().recipe.uuid
+
+        // 本地又改了一次，还没推上去
+        Thread.sleep(5)
+        a.repo.renameRecipe(recipeId, "红烧肉（我家版）")
+
+        // 这时拉回来一条「别人改的同一道菜」：本地是脏的、时间戳也不同 → 必须跳过
+        val store = SyncStore(a.db, a.dir)
+        val skipped = store.applyPull(
+            listOf(
+                org.miu.cookbook.sync.model.SyncRecord(
+                    uuid = uuid,
+                    rev = 9,
+                    deleted = false,
+                    updatedAt = System.currentTimeMillis() + 5_000,
+                    payload = org.miu.cookbook.sync.model.SyncRecipePayload(
+                        title = "红烧肉（砂锅版）",
+                        createdAt = 1,
+                        updatedAt = System.currentTimeMillis() + 5_000,
+                    ),
+                ),
+            ),
+        )
+
+        assertEquals("被跳过的那条要报回去，水位才能卡在它前面", setOf(uuid), skipped)
+        assertEquals(
+            "本地还没推的改动不能被覆盖",
+            "红烧肉（我家版）",
+            a.repo.recipeList.first().single().recipe.title,
+        )
+    }
 
     private fun newDevice(tag: String): Device {
         val dir = temp.newFolder("device-$tag")

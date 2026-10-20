@@ -15,16 +15,10 @@ abstract class RecipeDao {
     // 读的那一侧**每条查询都要自己带 `deleted_at = 0`**（soft delete 之后没有外键级联兜底了）：
     // 漏掉一处的表现是「删掉的菜还在列表里」，而这种 bug 只有肉眼能发现。
 
-    @Query("SELECT * FROM recipe WHERE deleted_at = 0 ORDER BY created_at DESC, id DESC")
-    abstract fun observeAll(): Flow<List<RecipeEntity>>
-
     /** 列表页要用的全部信息（菜名/分类/原料/封面）。 */
     @Transaction
     @Query("SELECT * FROM recipe WHERE deleted_at = 0 ORDER BY created_at DESC, id DESC")
     abstract fun observeAllWithDetails(): Flow<List<RecipeListRow>>
-
-    @Query("SELECT * FROM recipe WHERE id = :id AND deleted_at = 0")
-    abstract fun observeById(id: Long): Flow<RecipeEntity?>
 
     /** 详情页要用的全部信息（多了正文）。 */
     @Transaction
@@ -62,9 +56,13 @@ abstract class RecipeDao {
     @Query("UPDATE recipe SET title = :title, updated_at = :updatedAt, dirty = 1 WHERE id = :id")
     abstract suspend fun updateTitle(id: Long, title: String, updatedAt: Long)
 
-    /** 标脏（同步引擎重试、以及分类变更这种「内容没改但关联改了」的场合要用）。 */
+    /** 标脏（给补算哈希这种「行没改但附属数据变了」的场合用）。 */
     @Query("UPDATE recipe SET dirty = 1 WHERE id IN (:ids)")
     abstract suspend fun markDirty(ids: List<Long>)
+
+    /** 全部标脏：断开设备时用，让本地数据下次能整份推给新服务端。 */
+    @Query("UPDATE recipe SET dirty = 1 WHERE deleted_at = 0")
+    abstract suspend fun markAllDirty()
 
     /**
      * 把**远端**的墓碑落到本机：只打墓碑、不顺带改别的。
@@ -222,9 +220,6 @@ interface CategoryDao {
 @Dao
 abstract class MealLogDao {
 
-    @Query("SELECT * FROM meal_log ORDER BY epoch_day DESC, created_at DESC")
-    abstract fun observeAll(): Flow<List<MealLogEntity>>
-
     /**
      * 历史页用：一条记录带上菜名和封面路径。
      *
@@ -265,9 +260,6 @@ abstract class MealLogDao {
 
     @Insert
     abstract suspend fun insert(log: MealLogEntity): Long
-
-    @Query("DELETE FROM meal_log WHERE id = :id")
-    abstract suspend fun delete(id: Long)
 
     @Query("DELETE FROM meal_log WHERE id IN (:ids)")
     abstract suspend fun deleteByIds(ids: List<Long>)
@@ -328,10 +320,6 @@ abstract class MealLogDao {
         moveSlotTo(SWAP_TEMP_DAY, toSlot, fromDay, fromSlot)
         return true
     }
-
-    /** TODO(未来扩展)：做“按上次吃的时间加权随机”时要用，现在还没有调用点。 */
-    @Query("SELECT recipe_id, MAX(epoch_day) AS last_day FROM meal_log GROUP BY recipe_id")
-    abstract suspend fun lastCookedDays(): List<RecipeLastCooked>
 
     @Query("SELECT * FROM meal_log ORDER BY id")
     abstract suspend fun allLogs(): List<MealLogEntity>

@@ -113,20 +113,25 @@ class SyncApi(
         try {
             if (body != null) connection.outputStream.use { it.write(body) }
             val status = connection.responseCode
-            if (status == HttpURLConnection.HTTP_NOT_FOUND && allowNotFound) return null
+            // 先把响应体读完再决定：没读完就 disconnect 会把 JDK 的 keep-alive 作废，
+            // 首次同步几百张图就是几百次 TCP+TLS 握手，而且全是串行的。
             val stream: InputStream? = if (status in 200..299) {
                 runCatching { connection.inputStream }.getOrNull()
             } else {
                 connection.errorStream
             }
             val bytes = stream?.use { it.readAtMost(maxBytes) } ?: ByteArray(0)
+            if (status == HttpURLConnection.HTTP_NOT_FOUND && allowNotFound) return null
             if (status !in 200..299) {
                 val error = runCatching { SyncJson.json.decodeFromString<ApiError>(bytes.decodeToString()) }.getOrNull()
                 throw SyncHttpException(status, error?.error ?: "http_$status", error?.message.orEmpty())
             }
+            // 成功返回**不** disconnect：让连接回到 keep-alive 池里给下一个请求复用
             return bytes
-        } finally {
+        } catch (error: Throwable) {
+            // 出了错才把连接扔掉：这条 socket 的状态已经不可信了
             connection.disconnect()
+            throw error
         }
     }
 

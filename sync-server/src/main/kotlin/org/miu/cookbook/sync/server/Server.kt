@@ -55,6 +55,9 @@ class SyncServer(private val config: ServerConfig) : AutoCloseable {
 
     override fun close() {
         http?.stop(0)
+        // 两个后台线程都要先停：gc 线程每小时跑一次，不 interrupt 的话它会在已经关掉的
+        // 连接上继续跑（测试里每个实例都漏一个，日志里一小时后开始刷错误）。
+        gcThread?.interrupt()
         pairThread?.interrupt()
         executor.shutdownNow()
         executor.awaitTermination(2, TimeUnit.SECONDS)

@@ -30,7 +30,6 @@ android {
         targetSdk = 35
         versionCode = 13
         versionName = "1.2.1"
-        testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
     signingConfigs {
@@ -56,10 +55,11 @@ android {
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro",
             )
-            signingConfig = if (hasReleaseKeystore) {
-                signingConfigs.getByName("release")
-            } else {
-                signingConfigs.getByName("debug")
+            // 没有 keystore 时**不**偷偷用 debug 签名（那会把一个「装不上/装不上同一份」
+            // 的包当成正式包发出去）：产出一个未签名的 APK，打包流程自己会看到。
+            signingConfig = if (hasReleaseKeystore) signingConfigs.getByName("release") else null
+            if (!hasReleaseKeystore) {
+                logger.warn("警告：没有 keystore.properties，release 包会是未签名的。")
             }
         }
     }
@@ -100,13 +100,11 @@ dependencies {
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.activity.compose)
     implementation(libs.androidx.lifecycle.runtime.compose)
-    implementation(libs.androidx.lifecycle.viewmodel.compose)
     implementation(libs.androidx.navigation.compose)
 
     implementation(platform(libs.androidx.compose.bom))
     implementation(libs.androidx.compose.ui)
     implementation(libs.androidx.compose.ui.graphics)
-    implementation(libs.androidx.compose.ui.tooling.preview)
     implementation(libs.androidx.compose.material3)
     debugImplementation(libs.androidx.compose.ui.tooling)
 
@@ -122,7 +120,6 @@ dependencies {
     implementation(project(":sync-model"))
 
     testImplementation(libs.junit)
-    testImplementation(libs.kotlinx.coroutines.test)
     testImplementation(libs.robolectric)
     testImplementation(libs.androidx.test.junit)
     testImplementation(libs.androidx.test.core)

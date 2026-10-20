@@ -185,11 +185,13 @@ fun RecipeDetailScreen(
             titleDraft = current.title
         }
 
+        // 滚动位置提到 Crossfade 外面：切换编辑/只读时不该把人甩回顶部
+        val detailScroll = rememberScrollState()
         Crossfade(targetState = editing, label = "detail-mode") { isEditing ->
             Column(
                 modifier = Modifier
                     .fillMaxSize()
-                    .verticalScroll(rememberScrollState())
+                    .verticalScroll(detailScroll)
                     .padding(horizontal = 20.dp),
             ) {
                 if (isEditing) {

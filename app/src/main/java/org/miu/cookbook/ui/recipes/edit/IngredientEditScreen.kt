@@ -34,6 +34,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -73,18 +74,42 @@ fun IngredientEditScreen(
     val detailFlow = remember(recipeId) { repository.recipeDetail(recipeId) }
     val detail by detailFlow.collectAsStateWithLifecycle(initialValue = null)
     val lines = remember { mutableStateListOf<IngredientLine>() }
+    // 每一行一个稳定 id：删掉中间一行时，后面的行不会被当成「同一个位置」而复用
+    // 还没关的量词下拉（以前会出现下拉跳到下一行）
+    val rowIds = remember { mutableStateListOf<Long>() }
+    var nextRowId by remember { mutableStateOf(0L) }
     var loaded by remember { mutableStateOf(false) }
+    val saveKey = "ingredients:$recipeId"
     // 一边编一边落盘：停手 400ms 写一次，退出页面时把最后没来得及写的那一下补上
-    val scheduleSave = rememberDebouncedSaver<List<IngredientLine>> { snapshot ->
+    val scheduleSave = rememberDebouncedSaver<List<IngredientLine>>(key = saveKey) { snapshot ->
         repository.setIngredients(recipeId, snapshot)
+    }
+
+    fun replaceLines(next: List<IngredientLine>) {
+        lines.clear()
+        rowIds.clear()
+        val source = next.ifEmpty { listOf(IngredientLine()) }
+        source.forEach {
+            lines.add(it)
+            rowIds.add(nextRowId++)
+        }
+    }
+
+    // 刚退出又进来：先用还没写完的那一份渲染，别让库里的旧内容顶掉（转屏时最明显）
+    LaunchedEffect(saveKey) {
+        val pending = PendingEdits.peek<List<IngredientLine>>(saveKey) ?: return@LaunchedEffect
+        if (loaded) return@LaunchedEffect
+        replaceLines(pending)
+        loaded = true
     }
 
     LaunchedEffect(detail) {
         val loadedDetail = detail
         if (!loaded && loadedDetail != null) {
-            lines.addAll(loadedDetail.ingredients.sortedBy { it.sortOrder }
-                .map { IngredientLine(name = it.name, amount = it.amount, unit = it.unit) })
-            if (lines.isEmpty()) lines.add(IngredientLine())
+            replaceLines(
+                loadedDetail.ingredients.sortedBy { it.sortOrder }
+                    .map { IngredientLine(name = it.name, amount = it.amount, unit = it.unit) },
+            )
             loaded = true
         }
     }
@@ -107,9 +132,11 @@ fun IngredientEditScreen(
 
             DragList(
                 lines = lines,
-                onMove = {
-                    from, to ->
+                rowIds = rowIds,
+                newRowId = { nextRowId++ },
+                onMove = { from, to ->
                     lines.add(to, lines.removeAt(from))
+                    rowIds.add(to, rowIds.removeAt(from))
                     scheduleSave(lines.toList())
                 },
                 onEdited = { scheduleSave(lines.toList()) },
@@ -122,6 +149,8 @@ fun IngredientEditScreen(
 @Composable
 private fun DragList(
     lines: MutableList<IngredientLine>,
+    rowIds: MutableList<Long>,
+    newRowId: () -> Long,
     onMove: (from: Int, to: Int) -> Unit,
     onEdited: () -> Unit,
 ) {
@@ -132,6 +161,7 @@ private fun DragList(
     Column {
         lines.forEachIndexed { index, line ->
             val dragging = index == draggingIndex
+            key(rowIds.getOrNull(index) ?: index.toLong()) {
             IngredientRow(
                 line = line,
                 dragging = dragging,
@@ -141,6 +171,7 @@ private fun DragList(
                 },
                 onDelete = {
                     lines.removeAt(index)
+                    if (index < rowIds.size) rowIds.removeAt(index)
                     onEdited()
                 },
                 dragHandleModifier = Modifier.pointerInput(index) {
@@ -171,11 +202,13 @@ private fun DragList(
                     .zIndex(if (dragging) 1f else 0f)
                     .graphicsLayer { translationY = if (dragging) dragOffset else 0f },
             )
+            }
         }
     }
 
     TextButton(onClick = {
         lines.add(IngredientLine())
+        rowIds.add(newRowId())
         onEdited()
     }) {
         Icon(Icons.Filled.Add, contentDescription = null)

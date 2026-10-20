@@ -358,8 +358,8 @@ class CookbookRepository(
 
     // ---------- 同步 ----------
     //
-    // 这一版只有「游标读物」：拉取/推送/冲突那套在同步引擎里（下一步）。
-    // 放在仓库里是因为界面只认仓库这一个入口，设置页要显示上次同步时间。
+    // 这里只放「读游标 + 写游标 + 打墓碑」这些库内动作；拉取、推送、冲突处理都在
+    // SyncEngine 里。放在仓库里是因为界面只认仓库这一个入口，设置页要显示上次同步时间。
 
     /** 同步游标（库里只有一行）。 */
     val syncState: Flow<SyncStateEntity?> = syncStateDao.observe()
@@ -370,6 +370,9 @@ class CookbookRepository(
     suspend fun currentSyncState(): SyncStateEntity? = io { syncStateDao.get() }
 
     suspend fun saveSyncState(state: SyncStateEntity) = io { syncStateDao.put(state) }
+
+    /** 全部标脏：断开设备之后，本地每一道菜都要能重新推给下一个服务端。 */
+    suspend fun markAllDirty() = io { recipeDao.markAllDirty() }
 
     /**
      * 本机标识。服务端用它记录「这条改动是谁写的」，第一次要用的时候才生成。

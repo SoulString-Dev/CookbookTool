@@ -8,6 +8,8 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.BoxWithConstraints
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -19,6 +21,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.pager.HorizontalPager
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -69,6 +72,9 @@ import org.miu.cookbook.di.LocalAppContainer
 
 private val ThumbSize = 56.dp
 private val ThumbGap = 8.dp
+
+/** 加号按钮占的宽度（[IconButton] 的默认 48dp），切缩略图条时要先留出来。 */
+private val AddButtonWidth = 48.dp
 
 /**
  * 图片编辑：黑底大图 + 底部缩略图条。
@@ -240,47 +246,68 @@ fun ImageEditScreen(recipeId: Long, onDone: () -> Unit) {
                 modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
             )
 
-            Row(
+            BoxWithConstraints(
                 modifier = Modifier
                     .fillMaxWidth()
                     .padding(horizontal = 12.dp, vertical = 8.dp),
-                horizontalArrangement = Arrangement.Center,
-                verticalAlignment = Alignment.CenterVertically,
             ) {
-                ThumbnailStrip(
-                    images = images,
-                    currentIndex = pagerState.currentPage,
-                    baseDir = container.filesDir,
-                    onSelect = { index -> scope.launch { pagerState.scrollToPage(index) } },
-                    onMove = { from, to ->
-                        scope.launch {
-                            repository.moveImage(recipeId, from, to)
-                            reload()
-                        }
-                    },
-                )
-                if (images.size < maxImages) {
-                    Box {
-                        IconButton(onClick = { addMenuOpen = true }) {
-                            Icon(Icons.Filled.Add, contentDescription = stringResource(R.string.image_add), tint = Color.White)
-                        }
-                        DropdownMenu(expanded = addMenuOpen, onDismissRequest = { addMenuOpen = false }) {
-                            DropdownMenuItem(
-                                text = { Text(stringResource(R.string.image_take_photo)) },
-                                onClick = {
-                                    addMenuOpen = false
-                                    takePhoto()
-                                },
-                            )
-                            DropdownMenuItem(
-                                text = { Text(stringResource(R.string.image_pick_gallery)) },
-                                onClick = {
-                                    addMenuOpen = false
-                                    galleryLauncher.launch(
-                                        PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly),
-                                    )
-                                },
-                            )
+                // 缩略图条按张数变宽：放得下就居中，放不下就让缩略图条自己横着滚，
+                // 加号永远留出 48dp（以前是固定的 Row，五张图就把加号挤成 0 宽、点不到）。
+                val stripWidth = ThumbSize * images.size + ThumbGap * (images.size - 1).coerceAtLeast(0)
+                val fits = stripWidth + AddButtonWidth <= maxWidth
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = if (fits) Arrangement.Center else Arrangement.Start,
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Box(
+                        modifier = if (fits) {
+                            Modifier
+                        } else {
+                            Modifier.weight(1f).horizontalScroll(rememberScrollState())
+                        },
+                    ) {
+                        ThumbnailStrip(
+                            images = images,
+                            currentIndex = pagerState.currentPage,
+                            baseDir = container.filesDir,
+                            onSelect = { index -> scope.launch { pagerState.scrollToPage(index) } },
+                            onMove = { from, to ->
+                                scope.launch {
+                                    repository.moveImage(recipeId, from, to)
+                                    reload()
+                                }
+                            },
+                        )
+                    }
+                    if (images.size < maxImages) {
+                        Box {
+                            IconButton(onClick = { addMenuOpen = true }) {
+                                Icon(
+                                    imageVector = Icons.Filled.Add,
+                                    contentDescription = stringResource(R.string.image_add),
+                                    tint = Color.White,
+                                )
+                            }
+                            DropdownMenu(expanded = addMenuOpen, onDismissRequest = { addMenuOpen = false }) {
+                                DropdownMenuItem(
+                                    text = { Text(stringResource(R.string.image_take_photo)) },
+                                    onClick = {
+                                        addMenuOpen = false
+                                        takePhoto()
+                                    },
+                                )
+                                DropdownMenuItem(
+                                    text = { Text(stringResource(R.string.image_pick_gallery)) },
+                                    onClick = {
+                                        addMenuOpen = false
+                                        galleryLauncher.launch(
+                                            PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly),
+                                        )
+                                    },
+                                )
+                            }
                         }
                     }
                 }

@@ -120,10 +120,8 @@ fun MealHistoryScreen(
                 reverseLayout = true,
                 modifier = Modifier.fillMaxSize(),
             ) {
-                // 预留底部空白，免得最后一天被浮动加号挡住
+                // reverseLayout 下第一个 item 在最底下：这块是给浮动加号留的空
                 item(key = "bottom-space") { Spacer(Modifier.height(96.dp)) }
-                // 多选时顶上会浮一条「已选 N 天 + 删除」，给它让点位置
-                item(key = "top-space") { Spacer(Modifier.height(if (selecting) 72.dp else 8.dp)) }
                 items(days.asReversed(), key = { it.epochDay }) { day ->
                     DayRow(
                         day = day,
@@ -139,6 +137,9 @@ fun MealHistoryScreen(
                         color = MaterialTheme.colorScheme.outlineVariant,
                     )
                 }
+                // 多选时顶上会浮一条「已选 N 天 + 删除」：reverseLayout 里最后一个 item 在最上面，
+                // 所以让位的那块得放在这里（以前放在开头，实际落到了最底下，浮条照样压着最早那天）
+                item(key = "top-space") { Spacer(Modifier.height(if (selecting) 72.dp else 8.dp)) }
             }
 
             if (selecting) {

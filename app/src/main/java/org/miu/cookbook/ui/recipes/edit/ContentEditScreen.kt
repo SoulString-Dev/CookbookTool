@@ -87,9 +87,28 @@ fun ContentEditScreen(
     val requesters = remember { mutableStateListOf<FocusRequester>() }
     var loaded by remember { mutableStateOf(false) }
     var pendingFocus by remember { mutableStateOf<Int?>(null) }
+    val saveKey = "content:$recipeId:${section.name}"
     // 一边编一边落盘：停手 400ms 写一次，退出页面时把最后没来得及写的那一下补上
-    val scheduleSave = rememberDebouncedSaver<List<ContentLine>> { snapshot ->
+    val scheduleSave = rememberDebouncedSaver<List<ContentLine>>(key = saveKey) { snapshot ->
         repository.setContent(recipeId, section, snapshot)
+    }
+
+    // 刚退出又进来：先用还没写完的那一份渲染，别让库里的旧内容顶掉（转屏时最明显）
+    LaunchedEffect(saveKey) {
+        val pending = PendingEdits.peek<List<ContentLine>>(saveKey) ?: return@LaunchedEffect
+        if (loaded) return@LaunchedEffect
+        pending.forEach { line ->
+            drafts.add(
+                LineDraft(
+                    value = TextFieldValue(line.text, TextRange(line.text.length)),
+                    level = line.level,
+                    isHeading = line.isHeading,
+                ),
+            )
+        }
+        if (drafts.isEmpty()) drafts.add(blankDraft())
+        repeat(drafts.size) { requesters.add(FocusRequester()) }
+        loaded = true
     }
 
     LaunchedEffect(detail) {

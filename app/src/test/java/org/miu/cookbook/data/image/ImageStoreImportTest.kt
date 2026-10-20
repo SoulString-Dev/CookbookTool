@@ -6,6 +6,8 @@ import java.io.ByteArrayOutputStream
 import java.io.File
 import java.util.Base64
 import kotlinx.coroutines.runBlocking
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
 import org.junit.Rule
@@ -54,6 +56,19 @@ class ImageStoreImportTest {
         assertTrue("原图要落盘", File(baseDir, imported.path).isFile)
         assertTrue("缩略图要落盘", File(baseDir, imported.thumbPath).isFile)
         assertTrue(File(baseDir, imported.path).length() > 0)
+    }
+
+    @Test
+    fun `导入时算出的哈希就是文件内容的哈希`() = runBlocking {
+        val source = temp.newFile("hashed.jpg").apply { writeBytes(jpegBytes) }
+        val baseDir = baseDir()
+
+        val imported = ImageStore.importFromFile(source, baseDir) ?: error("导入失败")
+
+        assertEquals(ImageStore.sha256Of(File(baseDir, imported.path)), imported.sha256)
+        assertEquals(ImageStore.sha256Of(File(baseDir, imported.thumbPath)), imported.thumbSha256)
+        // 两张图内容不同（尺寸不同），哈希不该撞在一起
+        assertNotEquals(imported.sha256, imported.thumbSha256)
     }
 
     @Test

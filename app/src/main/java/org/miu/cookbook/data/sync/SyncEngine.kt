@@ -20,7 +20,9 @@ import org.miu.cookbook.data.db.SyncStateEntity
 import org.miu.cookbook.sync.model.PairResponse
 import org.miu.cookbook.sync.model.PushDelete
 import org.miu.cookbook.sync.model.PushRequest
+import org.miu.cookbook.sync.model.PushResponse
 import org.miu.cookbook.sync.model.PushUpsert
+import org.miu.cookbook.sync.model.SyncJson
 import org.miu.cookbook.sync.model.SyncProtocol
 import org.miu.cookbook.sync.model.SyncRecord
 import java.io.File
@@ -99,11 +101,16 @@ class SyncEngine(
         localUrl: String,
         code: String,
         deviceName: String,
-    ): Result<Unit> = withContext(Dispatchers.IO) { runCatching {
-        credentials.primaryUrl = primaryUrl.trim().trimEnd('/')
-        credentials.localUrl = localUrl.trim().trimEnd('/')
-
-        val candidates = credentials.candidateUrls(credentials.primaryUrl)
+    ): Result<Unit> = mutex.withLock {
+        withContext(Dispatchers.IO) { runCatching {
+        // 先按参数组候选地址、验通了再落盘：原来先把地址写进 prefs 再试，
+        // 失败会留下一套半截凭据，下次同步拿着错的地址乱撞。
+        val primary = primaryUrl.trim().trimEnd('/')
+        val local = localUrl.trim().trimEnd('/')
+        val candidates = listOf(local, credentials.lastGoodUrl, primary)
+            .map { it.trim().trimEnd('/') }
+            .filter { it.isNotEmpty() }
+            .distinct()
         if (candidates.isEmpty()) throw IllegalStateException("还没填服务端地址")
 
         var response: PairResponse? = null
@@ -124,6 +131,8 @@ class SyncEngine(
         }
         val paired = response ?: throw (lastError ?: IOException("连不上服务端"))
 
+        credentials.primaryUrl = primary
+        credentials.localUrl = local
         credentials.token = paired.token
         credentials.deviceName = deviceName.trim()
         credentials.lastGoodUrl = usedUrl
@@ -140,13 +149,22 @@ class SyncEngine(
             ),
         )
         _status.value = SyncStatus.Idle
-    }.onFailure { _status.value = SyncStatus.Failed(describe(it)) }.humanFailure() }
+    }.onFailure { _status.value = SyncStatus.Failed(describe(it)) }.humanFailure()
+    } }
 
-    /** 断开设备：清掉令牌与地址。本地数据和脏标记都留着（以后再配一个服务端还能整体推上去）。 */
+    /**
+     * 断开设备：清掉令牌与地址，并把本地食谱**全部标脏**。
+     *
+     * 标脏是必须的：只推 `dirty = 1` 的行，已经跟旧服务端同步过的行平时是干净的，
+     * 不标脏就会「换了个服务端，老菜一道都没搬过去」。
+     */
     suspend fun disconnect() = mutex.withLock {
-        credentials.clear()
-        repository.currentSyncState()?.let {
-            repository.saveSyncState(it.copy(serverUrl = "", lastRev = 0, lastError = ""))
+        withContext(Dispatchers.IO) {
+            credentials.clear()
+            repository.markAllDirty()
+            repository.currentSyncState()?.let {
+                repository.saveSyncState(it.copy(serverUrl = "", lastRev = 0, lastError = ""))
+            }
         }
         _status.value = SyncStatus.Idle
     }
@@ -192,7 +210,7 @@ class SyncEngine(
         for ((index, url) in candidates.withIndex()) {
             val api = SyncApi(url, credentials.token, connectTimeoutMs = timeoutFor(index, candidates.lastIndex))
             try {
-                val report = syncOnce(api, state)
+                val report = syncWithRetry(api, state)
                 credentials.lastGoodUrl = url
                 _status.value = SyncStatus.Done(report, System.currentTimeMillis())
                 return Result.success(report)
@@ -248,6 +266,25 @@ class SyncEngine(
     private fun timeoutFor(index: Int, lastIndex: Int): Int =
         if (index < lastIndex) PROBE_TIMEOUT_MS else NORMAL_TIMEOUT_MS
 
+    /**
+     * 429 / 5xx 在同一个地址上退避重试：这类错误重来一次通常就好，
+     * 而「换个地址」既解决不了限流，也会把局域网/公网的顺序打乱。
+     */
+    private suspend fun syncWithRetry(api: SyncApi, state: SyncStateEntity): SyncReport {
+        var attempt = 0
+        while (true) {
+            try {
+                return syncOnce(api, state)
+            } catch (error: SyncHttpException) {
+                if (!error.isTransient() || attempt >= MAX_TRANSIENT_RETRIES) throw error
+                attempt += 1
+                delay(TRANSIENT_BACKOFF_MS * attempt)
+            }
+        }
+    }
+
+    private fun SyncHttpException.isTransient(): Boolean = status == 429 || status in 500..599
+
     private suspend fun syncOnce(api: SyncApi, state: SyncStateEntity): SyncReport {
         // 正常情况用配对时服务端给的设备号；老数据没有的话回退到本机标识
         val deviceId = state.deviceId.ifBlank { repository.deviceId() }
@@ -260,33 +297,22 @@ class SyncEngine(
         var pushed = 0
         var conflicts = 0
         val pushedUuids = mutableSetOf<String>()
-        store.dirtyRecipes().chunked(SyncProtocol.MAX_PUSH_ITEMS).forEach { batch ->
+        for (batch in store.dirtyRecipes().chunked(SyncProtocol.MAX_PUSH_ITEMS)) {
             val files = mutableMapOf<String, File>()
-            val upserts = mutableListOf<PushUpsert>()
-            val deletes = mutableListOf<PushDelete>()
-            batch.forEach { recipe ->
-                if (recipe.deletedAt != 0L) {
-                    deletes += store.deleteOf(recipe)
-                } else {
-                    store.buildUpsert(recipe, files)?.let { upserts += it }
-                }
-            }
-            if (upserts.isEmpty() && deletes.isEmpty()) return@forEach
+            val deletes = batch.filter { it.deletedAt != 0L }.map { store.deleteOf(it) }
+            val upserts = store.buildUpserts(batch.filter { it.deletedAt == 0L }, files)
+            if (upserts.isEmpty() && deletes.isEmpty()) continue
 
             uploadBlobs(api, files)
-            val response = api.push(
-                PushRequest(
-                    deviceId = deviceId,
-                    // 「我上次看到的水位」：服务端拿它判断这条记录我到底见过没有
-                    baseRev = since,
-                    upserts = upserts,
-                    deletes = deletes,
-                ),
-            )
-            // 推送期间用户可能又改了这道菜，把这次推上去的 updatedAt 带上，供落地时判断要不要清脏
-            store.applyPush(response.records, upserts.associate { it.uuid to it.updatedAt })
-            pushed += upserts.size + deletes.size
-            conflicts += response.conflicts.size
+            // 按**字节**再切一层：50 条只是条数上限，一道菜塞满图片就能单条超过 4MB 的请求上限，
+            // 那样整批 413、水位不前进，这一批永远推不上去。
+            for ((partUpserts, partDeletes) in splitPushBySize(upserts, deletes)) {
+                val response = pushChunk(api, deviceId, since, partUpserts, partDeletes)
+                // 推送期间用户可能又改了这道菜，把这次推上去的 updatedAt 带上，供落地时判断要不要清脏
+                store.applyPush(response.records, partUpserts.associate { it.uuid to it.updatedAt })
+                pushed += partUpserts.size + partDeletes.size
+                conflicts += response.conflicts.size
+            }
             pushedUuids += batch.map { it.uuid }
         }
 
@@ -400,6 +426,38 @@ class SyncEngine(
         }
     }
 
+    /**
+     * 推一段。服务端按字节判 413，而客户端只能估算，所以真撞上就**二分重试**：
+     * 一半一半地推，总能找到服务端愿意收的大小。
+     */
+    private suspend fun pushChunk(
+        api: SyncApi,
+        deviceId: String,
+        baseRev: Long,
+        upserts: List<PushUpsert>,
+        deletes: List<PushDelete>,
+    ): PushResponse {
+        val request = PushRequest(deviceId = deviceId, baseRev = baseRev, upserts = upserts, deletes = deletes)
+        return try {
+            api.push(request)
+        } catch (error: SyncHttpException) {
+            if (error.status != 413) throw error
+            if (upserts.size > 1) {
+                val half = upserts.size / 2
+                val first = pushChunk(api, deviceId, baseRev, upserts.subList(0, half), deletes)
+                val second = pushChunk(api, deviceId, baseRev, upserts.subList(half, upserts.size), emptyList())
+                PushResponse(
+                    serverRev = maxOf(first.serverRev, second.serverRev),
+                    records = first.records + second.records,
+                    conflicts = first.conflicts + second.conflicts,
+                )
+            } else {
+                val title = upserts.firstOrNull()?.payload?.title ?: "这道菜"
+                throw SyncFailure("《$title》太大了，服务端收不下（把图片少放几张再试）", error)
+            }
+        }
+    }
+
     /** 把底层异常翻成一句人话。这些字符串会直接显示在设置页上。 */
     private fun describe(error: Throwable): String = when (error) {
         // 先看错误码再看状态码：403 既可能是「配对码不对」，也可能是「令牌失效」，两回事
@@ -436,5 +494,11 @@ class SyncEngine(
 
         /** 编辑完等这么久再同步：把「来回按返回」的那一串改动合并成一轮。 */
         const val DEBOUNCE_MILLIS = 1_500L
+
+        /** 429 / 5xx 在同一地址上重试几次。 */
+        const val MAX_TRANSIENT_RETRIES = 2
+
+        /** 重试间隔：第 n 次等 n 秒（1s、2s）。 */
+        const val TRANSIENT_BACKOFF_MS = 1_000L
     }
 }

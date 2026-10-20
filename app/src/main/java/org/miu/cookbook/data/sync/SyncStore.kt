@@ -54,10 +54,14 @@ class SyncStore(
      * 把一条食谱折成线上载荷，顺手把这次要传的图片记进 [files]（哈希 → 文件）。
      * 返回 null 表示这道菜推不了（基本不会发生，留个兜底）。
      */
-    suspend fun buildUpsert(recipe: RecipeEntity, files: MutableMap<String, File>): PushUpsert? {
-        val categoriesById = categoryDao.allCategories().associateBy { it.id }
+    suspend fun buildUpsert(
+        recipe: RecipeEntity,
+        files: MutableMap<String, File>,
+        categoriesById: Map<Long, CategoryEntity>? = null,
+    ): PushUpsert? {
+        val byId = categoriesById ?: categoryDao.allCategories().associateBy { it.id }
         val categories = categoryDao.linkedCategoryIds(recipe.id)
-            .mapNotNull { categoriesById[it] }
+            .mapNotNull { byId[it] }
             .map { SyncCategoryRef(uuid = it.uuid, name = it.name, sortOrder = it.sortOrder) }
 
         val ingredients = recipeDao.ingredientsFor(recipe.id).map {
@@ -87,6 +91,20 @@ class SyncStore(
                 images = images,
             ),
         )
+    }
+
+    /**
+     * 一批一起折：分类表只读一次。
+     *
+     * 原来每条都 `allCategories()` 全表读 + 建 map，50 条一批就是 50 次全表扫——
+     * 分类总共两位数，扫 50 遍纯浪费。
+     */
+    suspend fun buildUpserts(
+        recipes: List<RecipeEntity>,
+        files: MutableMap<String, File>,
+    ): List<PushUpsert> {
+        val categoriesById = categoryDao.allCategories().associateBy { it.id }
+        return recipes.mapNotNull { buildUpsert(it, files, categoriesById) }
     }
 
     fun deleteOf(recipe: RecipeEntity): PushDelete = PushDelete(uuid = recipe.uuid, deletedAt = recipe.deletedAt)
@@ -131,6 +149,7 @@ class SyncStore(
 
     /** 存量图片第一次同步前补算哈希（要读一遍文件，几百张也就几秒）。 */
     suspend fun backfillHashes() {
+        val touched = mutableSetOf<Long>()
         imageDao.allMissingHashes().forEach { image ->
             val full = File(baseDir, image.path)
             val thumbFile = if (image.thumbPath.isNotBlank()) File(baseDir, image.thumbPath) else full
@@ -140,8 +159,12 @@ class SyncStore(
             }
             if (sha != image.sha256 || thumbSha != image.thumbSha256) {
                 imageDao.updateHashes(image.id, sha, thumbSha)
+                touched += image.recipeId
             }
         }
+        // 哈希是在「行没改」的情况下补出来的：不标脏的话，这道菜如果是干净的
+        // 就永远不会被重推，图片也就一直留在本机
+        if (touched.isNotEmpty()) recipeDao.markDirty(touched.toList())
     }
 
     /** 按哈希找本地已有的文件（上传前用来判断「这张图我这有」）。 */

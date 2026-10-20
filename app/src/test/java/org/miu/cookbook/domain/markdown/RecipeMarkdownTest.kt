@@ -32,6 +32,42 @@ class RecipeMarkdownTest {
     )
 
     @Test
+    fun `小数开头的行不会被当成序号`() {
+        val text = """# 卤蛋
+
+## 原料
+
+1. 鸡蛋 6 个
+
+## 做法
+
+1. 锅里放水
+1.5 升就够，别太多
+"""
+
+        val parsed = RecipeMarkdown.parse(text)
+
+        // 「1.5 升就够」是正文，不是第 1 项「5 升就够」
+        assertEquals(listOf("锅里放水", "1.5 升就够，别太多"), parsed.directions.map { it.text })
+    }
+
+    @Test
+    fun `顿号和右括号也能当序号，句点后面没空格也行`() {
+        val text = """# 拍黄瓜
+
+## 做法
+
+1、拍碎
+2.切段
+3) 拌料
+"""
+
+        val parsed = RecipeMarkdown.parse(text)
+
+        assertEquals(listOf("拍碎", "切段", "拌料"), parsed.directions.map { it.text })
+    }
+
+    @Test
     fun `菜名是一级标题，分类是标签行`() {
         val text = RecipeMarkdown.serialize(sample)
         assertTrue(text.startsWith("# 番茄炒蛋"))

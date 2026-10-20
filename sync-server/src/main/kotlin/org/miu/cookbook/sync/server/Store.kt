@@ -69,6 +69,9 @@ class Store(dataDir: File) : AutoCloseable {
             )
             """,
             "CREATE INDEX IF NOT EXISTS idx_recipe_rev ON recipe(server_rev)",
+            // 冲突/重推时会按「同一台设备 + 同一时间戳」找既有记录（findExistingCopy），
+            // 没有索引就是每次冲突全表扫一遍。
+            "CREATE INDEX IF NOT EXISTS idx_recipe_origin ON recipe(origin_dev, updated_at)",
             "CREATE TABLE IF NOT EXISTS blob (sha256 TEXT PRIMARY KEY, size INTEGER NOT NULL, created_at INTEGER NOT NULL)",
             "CREATE TABLE IF NOT EXISTS pair_code (code TEXT PRIMARY KEY, created_at INTEGER NOT NULL, used INTEGER NOT NULL DEFAULT 0)",
         )
@@ -214,23 +217,35 @@ class Store(dataDir: File) : AutoCloseable {
      *
      * 客户端的水位比服务端还高（服务端被回滚 / 换了库）时，当作从头拉，让它能自愈。
      */
-    fun pull(since: Long, limit: Int): PullResponse = read {
-        val current = rev()
-        val from = if (since > current) 0L else since
-        val rows = query(
-            "SELECT uuid, server_rev, deleted, updated_at, payload FROM recipe WHERE server_rev > ? ORDER BY server_rev ASC LIMIT ?",
-            from,
-            limit + 1,
-        ) { rowToStored(it) }
-        val hasMore = rows.size > limit
-        val page = if (hasMore) rows.take(limit) else rows
-        PullResponse(
-            serverRev = current,
-            nextSince = page.lastOrNull()?.rev ?: from,
-            hasMore = hasMore,
-            recipes = page.mapNotNull { it.toRecord() },
+    fun pull(since: Long, limit: Int): PullResponse {
+        // 锁里只做「取一行行原始数据」，JSON 解码放到锁外：
+        // 8 个 handler 线程共用一把锁，在锁里解一页（最多 200 条）的载荷会把图片上传和
+        // 别人的拉取一起堵住。
+        val snapshot = read {
+            val current = rev()
+            val from = if (since > current) 0L else since
+            val rows = query(
+                "SELECT uuid, server_rev, deleted, updated_at, payload FROM recipe WHERE server_rev > ? ORDER BY server_rev ASC LIMIT ?",
+                from,
+                limit + 1,
+            ) { rowToStored(it) }
+            val hasMore = rows.size > limit
+            PullSnapshot(current, from, if (hasMore) rows.take(limit) else rows, hasMore)
+        }
+        return PullResponse(
+            serverRev = snapshot.current,
+            nextSince = snapshot.page.lastOrNull()?.rev ?: snapshot.from,
+            hasMore = snapshot.hasMore,
+            recipes = snapshot.page.mapNotNull { it.toRecord() },
         )
     }
+
+    private class PullSnapshot(
+        val current: Long,
+        val from: Long,
+        val page: List<StoredRecord>,
+        val hasMore: Boolean,
+    )
 
     // ------------------------------------------------------------ 推送
 
