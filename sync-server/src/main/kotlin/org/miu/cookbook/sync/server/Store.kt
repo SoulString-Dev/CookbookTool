@@ -258,6 +258,27 @@ class Store(dataDir: File) : AutoCloseable {
                 records[upsert.uuid] = existing.toRecord() ?: continue
                 continue
             }
+            // 撞墓碑：客户端还在编辑一道已经被删掉的菜。
+            // 这条**不能**走下面的冲突分支——墓碑的 payload 是空串，`insertCopy("")` 会落一条
+            // `deleted = 0, payload = ''` 的僵尸行：客户端拉下来解析出 null 直接跳过，
+            // `recipeCount()` 却多算一条，gc 也永远删不掉它。
+            // 按「较新者胜」办：客户端的改动更新就原地复活（同一个 uuid，不发副本），
+            // 否则回墓碑并报一条「服务端赢」的冲突（和删除冲突一样，不产生副本）。
+            if (existing.deleted) {
+                if (upsert.updatedAt > existing.updatedAt) {
+                    val rev = nextRev()
+                    updateRecord(
+                        upsert.uuid, rev, deleted = false, updatedAt = upsert.updatedAt,
+                        payload = SyncJson.encodePayload(upsert.payload), deviceId, now,
+                    )
+                    records[upsert.uuid] = SyncRecord(upsert.uuid, rev, false, upsert.updatedAt, upsert.payload)
+                } else {
+                    records[upsert.uuid] = existing.toRecord() ?: continue
+                    conflicts += SyncConflict(upsert.uuid, "server", existing.updatedAt, upsert.updatedAt, "")
+                }
+                continue
+            }
+
             val stale = existing.rev > request.baseRev
             if (!stale) {
                 val rev = nextRev()

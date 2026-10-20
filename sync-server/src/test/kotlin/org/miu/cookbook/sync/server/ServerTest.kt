@@ -345,6 +345,41 @@ class ServerTest {
     }
 
     @Test
+    fun `客户端改了一道被删掉的菜，服务端复活它而不是造假副本`() {
+        val a = pair("甲")
+        val b = pair("乙")
+        push(a.token, PushRequest(a.deviceId, 0, listOf(PushUpsert("r-1", 1000, recipe("红烧肉", 1000)))))
+        push(a.token, PushRequest(a.deviceId, 1, emptyList(), listOf(PushDelete("r-1", 2000))))
+
+        // 乙离线改过这道菜（时间比墓碑新），推上来时撞墓碑
+        val res = push(b.token, PushRequest(b.deviceId, 0, listOf(PushUpsert("r-1", 3000, recipe("红烧肉（我家版）", 3000)))))
+
+        assertTrue(res.conflicts.isEmpty())
+        val record = res.records.first { it.uuid == "r-1" }
+        assertFalse("应该被复活", record.deleted)
+        assertEquals("红烧肉（我家版）", record.payload?.title)
+        // 关键：没有僵尸行（payload 空、deleted = 0 的那种），库里就这一条
+        assertEquals(1L, server.store().recipeCount())
+    }
+
+    @Test
+    fun `客户端改的比墓碑旧，服务端回墓碑并且不留副本`() {
+        val a = pair("甲")
+        val b = pair("乙")
+        push(a.token, PushRequest(a.deviceId, 0, listOf(PushUpsert("r-1", 1000, recipe("红烧肉", 1000)))))
+        push(a.token, PushRequest(a.deviceId, 1, emptyList(), listOf(PushDelete("r-1", 3000))))
+
+        val res = push(b.token, PushRequest(b.deviceId, 0, listOf(PushUpsert("r-1", 2000, recipe("旧改动", 2000)))))
+
+        assertEquals(1, res.conflicts.size)
+        assertEquals("", res.conflicts[0].copyUuid)
+        assertTrue(res.records.first { it.uuid == "r-1" }.deleted)
+        // 墓碑还在库里（一条，不是零条也不是两条），只是不算「活着的菜」
+        assertEquals(1, server.store().pull(0, 10).recipes.size)
+        assertEquals(0L, server.store().recipeCount())
+    }
+
+    @Test
     fun `同步接口按设备限流`() {
         val limited = newServer(apiPerMinute = 2)
         val url = "http://127.0.0.1:${limited.start()}"
