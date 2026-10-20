@@ -52,6 +52,27 @@ class CookbookRootSmokeTest {
         composeRule.onNodeWithContentDescription("记录饮食").assertIsDisplayed()
     }
 
+
+    @Test
+    fun `记录模式下顶栏只剩返回箭头，点它退出`() {
+        launchApp()
+        composeRule.onNodeWithContentDescription("记录饮食").performClick()
+        composeRule.waitForIdle()
+
+        // 顶栏标题跟着变成「记录饮食」，而此刻顶栏上不该再有同步、备份菜单和汉堡
+        composeRule.onNodeWithText("记录饮食").assertIsDisplayed()
+        composeRule.onNodeWithContentDescription("同步").assertDoesNotExist()
+        composeRule.onNodeWithContentDescription("备份与恢复").assertDoesNotExist()
+        composeRule.onNodeWithContentDescription("打开侧边栏").assertDoesNotExist()
+
+        composeRule.onNodeWithContentDescription("退出记录").performClick()
+        composeRule.waitForIdle()
+        // 回到食谱页：汉堡回来了（侧栏抽屉在关闭时也参与合成，所以不拿标题「食谱」当判据）
+        composeRule.onNodeWithContentDescription("打开侧边栏").assertIsDisplayed()
+        composeRule.onNodeWithContentDescription("同步").assertIsDisplayed()
+        composeRule.onNodeWithContentDescription("记录饮食").assertIsDisplayed()
+    }
+
     @Test
     fun `侧边栏可以切到饮食历史`() {
         launchApp()

@@ -21,7 +21,6 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.List
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Close
@@ -86,6 +85,9 @@ fun RecipeListScreen(
     onRecordRequestedHandled: () -> Unit = {},
     /** 把「现在在不在记录模式」告诉外面，让右下角加号知道自己是哪一个含义。 */
     onRecordingChanged: (Boolean) -> Unit = {},
+    /** 顶栏的返回箭头请求退出记录模式（面板里不再自带退出按钮）。 */
+    exitRecordingRequested: Boolean = false,
+    onExitRecordingHandled: () -> Unit = {},
     /** 顶栏「⋮」里点了「多选」。 */
     selectionRequested: Boolean = false,
     onSelectionRequestedHandled: () -> Unit = {},
@@ -141,6 +143,14 @@ fun RecipeListScreen(
     }
 
     LaunchedEffect(recording) { onRecordingChanged(recording) }
+
+    // 顶栏的返回箭头 → 退出记录模式
+    LaunchedEffect(exitRecordingRequested) {
+        if (exitRecordingRequested) {
+            recording = false
+            onExitRecordingHandled()
+        }
+    }
 
     // 顶栏「⋮」→「多选」：等价于以前搜索栏上的编辑按钮
     LaunchedEffect(selectionRequested) {
@@ -288,7 +298,6 @@ fun RecipeListScreen(
                 candidates = remember(allItems, recordQuery) {
                     FuzzySearch.rank(allItems, recordQuery) { it.searchDocument }
                 },
-                onExit = { recording = false },
                 onPick = { item ->
                     recordTargetAllowSkip = false
                     recordTarget = item.id to item.title
@@ -535,7 +544,6 @@ private fun RecordPanel(
     query: String,
     onQueryChange: (String) -> Unit,
     candidates: List<RecipeListItem>,
-    onExit: () -> Unit,
     onPick: (RecipeListItem) -> Unit,
     onAddRecipe: () -> Unit,
     modifier: Modifier = Modifier,
@@ -551,20 +559,14 @@ private fun RecordPanel(
     ) {
         Column(Modifier.padding(bottom = 8.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                // 这个是「退出记录模式」，所以用返回箭头而不是 ×：× 会让人当成本地清除输入。
-                IconButton(onClick = onExit) {
-                    Icon(
-                        imageVector = Icons.AutoMirrored.Filled.ArrowBack,
-                        contentDescription = stringResource(R.string.meal_record_exit),
-                    )
-                }
+                // 退出记录的返回箭头在顶栏上（见 CookbookRoot）：这一行要留给输入框，
+                // 窄屏 + 侧栏展开时多一个 48dp 的按钮，「吃了什么？」就会折成两行
                 OutlinedTextField(
                     value = query,
                     onValueChange = onQueryChange,
                     placeholder = { Text(stringResource(R.string.meal_record_search_hint)) },
                     singleLine = true,
                     shape = RoundedCornerShape(28.dp),
-                    leadingIcon = { Icon(Icons.Filled.Search, contentDescription = null) },
                     colors = OutlinedTextFieldDefaults.colors(
                         unfocusedContainerColor = MaterialTheme.colorScheme.surface,
                         focusedContainerColor = MaterialTheme.colorScheme.surface,

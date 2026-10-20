@@ -182,6 +182,8 @@ fun CookbookRoot(
     var newRecipeRequested by remember { mutableStateOf(false) }
     var recordRequested by remember { mutableStateOf(false) }
     var recordingActive by remember { mutableStateOf(false) }
+    // 记录模式的「退出」在顶栏上（面板里不再放返回箭头），所以要一条从顶栏到列表页的请求通道
+    var exitRecordingRequested by remember { mutableStateOf(false) }
 
     // 顶栏「⋮」里的「多选」：主界面用它进入多选，替掉了原来浮动栏上的编辑图标
     var selectionRequested by remember { mutableStateOf(false) }
@@ -217,6 +219,10 @@ fun CookbookRoot(
     // 只是把标题换成当前页面、把汉堡换成返回箭头。
     val sectionName = backStackEntry?.arguments?.getString(ARG_CONTENT_SECTION)
     val topTitle = when {
+        // 记录模式盖住整个食谱页，标题跟着变，用户才知道自己进了另一个模式
+        recordingActive && mainDestination == MainDestination.Recipes ->
+            stringResource(R.string.meal_record_title)
+
         mainDestination != null -> stringResource(mainDestination.labelRes)
         route == ROUTE_RECIPE_DETAIL -> stringResource(
             if (detailState.editing) R.string.recipe_edit_title else R.string.recipe_detail_title,
@@ -301,7 +307,16 @@ fun CookbookRoot(
                 TopAppBar(
                     title = { Crossfade(targetState = topTitle, label = "top-title") { Text(it) } },
                     navigationIcon = {
-                        if (mainDestination != null) {
+                        if (recordingActive && mainDestination == MainDestination.Recipes) {
+                            // 记录模式的退出放在这里：面板里一行要塞输入框和加号，
+                            // 再放一个返回箭头，窄屏上「吃了什么？」就折行了
+                            IconButton(onClick = { exitRecordingRequested = true }) {
+                                Icon(
+                                    imageVector = Icons.AutoMirrored.Filled.ArrowBack,
+                                    contentDescription = stringResource(R.string.meal_record_exit),
+                                )
+                            }
+                        } else if (mainDestination != null) {
                             IconButton(onClick = { scope.launch { drawerState.open() } }) {
                                 Icon(
                                     imageVector = Icons.Filled.Menu,
@@ -330,6 +345,9 @@ fun CookbookRoot(
                     },
                     actions = {
                         when {
+                            // 记录模式下顶栏只留标题和返回：此刻唯一的动作是选菜
+                            recordingActive && mainDestination == MainDestination.Recipes -> Unit
+
                             mainDestination != null -> {
                                 // 同步按钮只放食谱页：历史页的饮食记录本来就不同步，
                                 // 在那儿摆一个同步按钮只会让人以为它也会跟着走
@@ -443,6 +461,8 @@ fun CookbookRoot(
                         recordRequested = recordRequested,
                         onRecordRequestedHandled = { recordRequested = false },
                         onRecordingChanged = { recordingActive = it },
+                        exitRecordingRequested = exitRecordingRequested,
+                        onExitRecordingHandled = { exitRecordingRequested = false },
                         selectionRequested = selectionRequested,
                         onSelectionRequestedHandled = { selectionRequested = false },
                         railEnabled = sidebarEnabled,

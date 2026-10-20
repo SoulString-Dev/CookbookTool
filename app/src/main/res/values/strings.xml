@@ -119,7 +119,7 @@
     <!-- M4：饮食历史 -->
     <string name="meal_record_title">记录饮食</string>
     <string name="meal_record_hint">输入菜名或首字母找菜，点一下就是它。</string>
-    <string name="meal_record_search_hint">今天吃了什么？</string>
+    <string name="meal_record_search_hint">吃了什么？</string>
     <string name="meal_record_exit">退出记录</string>
     <string name="meal_record_date">日期</string>
     <string name="meal_record_slot">哪一餐</string>
